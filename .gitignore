@@ -1,0 +1,105 @@
+# ============================================================
+# CMS Sekolahku — .gitignore (STRICT)
+# ============================================================
+
+# ---------- FORBIDDEN: KREDENSIAL & SECRET ----------
+# JANGAN PERNAH di-commit. Jika salah satu ini muncul di git status, STOP.
+.env
+.env.*
+*.env
+env.local
+env.production
+secrets/
+credentials/
+.credentials/
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.ppk
+*.p7b
+*.crt
+*.cert
+*token*.txt
+*secret*
+*credential*
+*password*.txt
+database.yml
+db_config.prod.*
+*.sqlite
+*.sqlite3
+*.db
+
+# ---------- OS / Editor ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ---------- Node / JavaScript ----------
+node_modules/
+dist/
+build/
+out/
+.next/
+.nuxt/
+.svelte-kit/
+.astro/
+.turbo/
+.cache/
+.parcel-cache/
+coverage/
+.nyc_output/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.eslintcache
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# ---------- Go ----------
+*.exe
+*.test
+*.out
+vendor/
+
+# ---------- Claude Code / Agent lokal ----------
+# File sesi & state lokal agent tidak boleh masuk repo
+.claude/settings.local.json
+.claude/memory.local/
+CLAUDE.local.md
+*.local.md
+
+# ---------- Artefak build & misc ----------
+*.tgz
+*.zip
+*.tar.gz
+tmp/
+temp/
+
+# ---------- Referensi legacy (JANGAN di-commit) ----------
+# Source PHP lama hanya bahan referensi, bukan bagian repo ini.
+# Ia hidup di ~/cms-sekolahku/cms-sekolahku-v3.1.1/ (untracked).
+cms-sekolahku-v3.1.1/
+reference/
+legacy/
