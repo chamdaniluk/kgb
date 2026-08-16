@@ -54,6 +54,6 @@ func GetUnitByID(ctx context.Context, pool *pgxpool.Pool, id int64) (Unit, error
 // UnitInScope reports whether candidateID is the scope unit or a direct child.
 func UnitInScope(ctx context.Context, pool *pgxpool.Pool, scopeID, candidateID int64) (bool, error) {
 	var ok bool
-	err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM units WHERE id=$1 AND (id=$2 OR parent_id=$1))`, scopeID, candidateID).Scan(&ok)
+	err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM units candidate JOIN units scope ON scope.id=$1 WHERE candidate.id=$2 AND (candidate.id=scope.id OR (candidate.parent_id=scope.id AND candidate.type IN ('sd','tk'))))`, scopeID, candidateID).Scan(&ok)
 	return ok, err
 }
