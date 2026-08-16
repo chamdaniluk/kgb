@@ -1,6 +1,6 @@
-# API DOCUMENTATION — SI CENDIKIA v1.0 (FINAL)
+# API DOCUMENTATION — SI CENDIKIA v1.1 (FINAL)
 
-> Fase 3 dari 6 — **FINAL, disetujui owner 2026-08-16**. Sumber: PRD v1.3 + ERD v1.0 FINAL.
+> Fase 3 dari 6 — **FINAL (v1.1: + endpoint statistik publik), disetujui owner 2026-08-16**. Sumber: PRD v1.4 + ERD v1.0 FINAL.
 > Konvensi teknis final (framework, bentuk token, dsb.) diputuskan di fase TECH STACK; dokumen ini mendefinisikan **kontrak** yang harus dipenuhi implementasi apa pun.
 
 ## 1. Konvensi Umum
@@ -201,3 +201,31 @@ Guru      : GET /letters/{id}/download   → surat-kgb-{id}.pdf
 ```
 
 Setiap panah di atas menulis satu baris `audit_logs`.
+
+## 11. Statistik Publik (beranda, tanpa login)
+
+### `GET /public/stats`
+Statistik agregat untuk beranda publik (PRD F-28). **Tanpa token**; hanya data ringkasan, tidak ada data pribadi guru.
+
+```json
+{ "data": {
+    "teachers_total": 1248,
+    "submissions_active": 17,
+    "letters_issued": 342,
+    "submissions_per_month": [
+      { "month": "2026-07", "count": 3 },
+      { "month": "2026-08", "count": 9 }
+    ],
+    "per_status": {
+      "menunggu_unit": 4, "menunggu_dinas": 6, "menunggu_tte": 2,
+      "dikembalikan": 3, "terbit": 342
+    },
+    "per_unit": [
+      { "unit": "Korwil Kec. Grobogan", "count": 12 },
+      { "unit": "SMPN 1 Purwodadi", "count": 8 }
+    ]
+} }
+```
+
+- Halaman `Tatacara Penggunaan` (`/panduan`) dan `Alur Pengajuan` (`/alur`) adalah **konten statis** — tidak butuh endpoint.
+- Respons boleh di-cache (mis. 5 menit) karena hanya agregat; audit tidak diperlukan untuk baca publik.

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Versi | 1.3 (final — v1.2 + aturan submit ulang, nomor otomatis dari template, gaji dari tabel skala PNS/PPPK; keputusan owner 2026-08-16) |
+| Versi | 1.4 (final — v1.3 + beranda publik dengan statistik/grafik, menu tatacara & alur; keputusan owner 2026-08-16) |
 | Tanggal | 2026-08-16 |
 | Owner | Chamdani — Dinas Pendidikan Kabupaten Grobogan |
 | Status | Fase 1 dari 6 SELESAI ✅ — lanjut DATABASE ERD |
@@ -92,6 +92,11 @@ Sistem e-KGB live (`kgb.grobogankab.web.id`) berfungsi sebagai referensi domain,
 - F-22 Perubahan data kepegawaian yang relevan dengan KGB (mis. gaji, TMT) diajukan **bersamaan dengan pengajuan KGB**, sekalian dengan bukti dukung dan kelengkapan berkas dalam satu berkas PDF. Tidak ada mekanisme perubahan data terpisah di luar pengajuan KGB.
 - F-23 Nilai yang lolos verifikasi dan diterbitkan otomatis memperbarui master data guru (mis. gaji pokok dan TMT KGB terakhir) pada saat surat diterbitkan.
 - F-24 Jika verifikator menemukan ketidaksesuaian data atau berkas, pengajuan ditolak dengan catatan; guru memperbaiki dan mengajukan ulang.
+
+### 5.7 Beranda Publik & Panduan
+- F-28 Beranda publik (dapat diakses **tanpa login**) menampilkan informasi SI CENDIKIA berupa **grafik statistik agregat**: jumlah guru ASN, pengajuan berproses, surat terbit, grafik pengajuan per bulan, per status, dan per unit kerja. Data agregat hanya ringkasan — tidak memuat data pribadi guru.
+- F-29 Menu **Tatacara Penggunaan**: panduan langkah per peran (guru, verifikator unit, verifikator dinas, pimpinan, admin) — cara login, mengajukan, memverifikasi, menandatangani, dan mengelola.
+- F-30 Menu **Alur Pengajuan**: visualisasi alur lengkap pengajuan KGB (login → ajukan → verifikasi unit → verifikasi Dinas → TTE → surat terbit) beserta penjelasan tiap status dan aturan submit ulang.
 
 ## 6. Kebutuhan Non-Fungsional
 

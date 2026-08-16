@@ -1,6 +1,6 @@
-# UI/UX — SI CENDIKIA v0.1 (DRAF)
+# UI/UX — SI CENDIKIA v0.2 (DRAF)
 
-> Fase 4 dari 6. Sumber: PRD v1.3 + ERD v1.0 FINAL + API v1.0. Menunggu review owner.
+> Fase 4 dari 6. Sumber: PRD v1.4 + ERD v1.0 FINAL + API v1.1. Menunggu review owner.
 
 ## 1. Prinsip Desain
 
@@ -14,21 +14,24 @@
 ## 2. Peta Aplikasi (Sitemap)
 
 ```
-/login
+/                           (beranda publik: info + grafik + menu)
+  /panduan                  (tatacara penggunaan, konten statis)
+  /alur                     (alur pengajuan, konten statis)
+  /login
 /guru
-  /guru/dashboard            (beranda ASN)
-  /guru/pengajuan/baru       (form + unggah PDF)
-  /guru/pengajuan/{id}       (detail + timeline + unduh surat)
-/unit                        (beranda verifikator unit)
-  /unit/{id}                 (detail + approve/reject)
-/dinas                       (beranda verifikator dinas)
-  /dinas/{id}                (detail + approve/reject)
-/pimpinan                    (antrean TTE)
-  /pimpinan/{submission_id}  (pratinjau konsep + TTE)
+  /guru/dashboard           (beranda ASN)
+  /guru/pengajuan/baru      (form + unggah PDF)
+  /guru/pengajuan/{id}      (detail + timeline + unduh surat)
+/unit                       (beranda verifikator unit)
+  /unit/{id}                (detail + approve/reject)
+/dinas                      (beranda verifikator dinas)
+  /dinas/{id}               (detail + approve/reject)
+/pimpinan                   (antrean TTE)
+  /pimpinan/{submission_id} (pratinjau konsep + TTE)
 /admin
   /admin/dashboard
   /admin/import-bkn
-  /admin/guru                (master, read-only)
+  /admin/guru               (master, read-only)
   /admin/unit
   /admin/pengguna
   /admin/skala-gaji
@@ -52,6 +55,107 @@ Navigasi: header bar sederhana (logo kiri, nama pengguna + peran kanan, logout).
 Timeline vertikal dengan 5 titik: **Diajukan → Unit → Dinas → TTE → Terbit**. Titik terlewati = hijau; titik saat ini = biru berdenyut; penolakan = merah dengan catatan di bawahnya.
 
 ## 4. Wireframe Layar Utama
+
+### 4.0 Beranda Publik (Home Awal) — tanpa login
+
+```
+┌─────────────────────────────────────────────────┐
+│ [logo] SI CENDIKIA          [Tatacara] [Alur]   │
+│ Kenaikan Gaji Berkala ASN   [Masuk]             │
+│ Dinas Pendidikan Kab. Grobogan                  │
+├─────────────────────────────────────────────────┤
+│                                                 │
+│  📊 Informasi SI CENDIKIA                       │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐        │
+│  │  1.248   │ │    17    │ │   342    │        │
+│  │   Guru   │ │ Proses   │ │ Terbit   │        │
+│  └──────────┘ └──────────┘ └──────────┘        │
+│                                                 │
+│  Pengajuan per bulan          Pengajuan per     │
+│  ┌───────────────┐           status            │
+│  │   ██  Jul  3  │           ┌────────────┐    │
+│  │   ██████ Agu 9│           │ ▓ menunggu │    │
+│  │   ███  Sep 5  │           │ unit   4   │    │
+│  │               │           │ ▒ dinas  6 │    │
+│  │               │           │ ░ TTE    2 │    │
+│  │               │           │ █ terbit342│    │
+│  └───────────────┘           └────────────┘    │
+│                                                 │
+│  Pengajuan per unit kerja                       │
+│  ┌───────────────────────────────┐              │
+│  │ Korwil Grobogan ████████████ 12│              │
+│  │ SMPN 1 Purwodadi ████████   8 │              │
+│  │ SKB Grobogan    ████        4 │              │
+│  └───────────────────────────────┘              │
+│                                                 │
+│  ┌────────────────────────────────────────────┐ │
+│  │ [Panduan Tatacara]  [Lihat Alur]  [Masuk]  │ │
+│  └────────────────────────────────────────────┘ │
+│                                                 │
+│  "Layanan KGB yang cepat, efektif, non-stop."   │
+├─────────────────────────────────────────────────┤
+│ Dinas Pendidikan Kabupaten Grobogan · 2026      │
+└─────────────────────────────────────────────────┘
+```
+- Data dari `GET /public/stats` (API v1.1 §11), di-cache 5 menit.
+- Grafik ringan tanpa library berat (CSS bar sederhana) — sesuai prinsip ringan.
+- Tiga tombol aksi: Tatacara, Alur, Masuk.
+
+### 4.0a Tatacara Penggunaan (`/panduan`)
+
+```
+┌─────────────────────────────────────────────────┐
+│ ‹ Beranda      Tatacara Penggunaan              │
+├─────────────────────────────────────────────────┤
+│ Pilih peran:                                    │
+│ [Guru] [Verifikator Unit] [Verifikator Dinas]   │
+│ [Pimpinan] [Admin]                              │
+│                                                 │
+│ ┌─ Guru ──────────────────────────────────────┐ │
+│ │ 1. Login dengan NIP (password = NIP)        │ │
+│ │ 2. Klik "+ Ajukan KGB Baru"                 │ │
+│ │ 3. Cek pratinjau gaji otomatis              │ │
+│ │ 4. Pilih TMT & unggah 1 berkas PDF (≤5MB)   │ │
+│ │ 5. Klik Kirim → pengajuan terkunci          │ │
+│ │ 6. Pantau status di beranda                 │ │
+│ │ 7. Jika ditolak: baca catatan, perbaiki,    │ │
+│ │    kirim ulang (unit→dari unit,             │ │
+│ │    dinas→langsung dinas)                    │ │
+│ │ 8. Unduh surat PDF saat status "Terbit"     │ │
+│ └─────────────────────────────────────────────┘ │
+│ ... (kartu serupa untuk 4 peran lain)           │
+└─────────────────────────────────────────────────┘
+```
+
+### 4.0b Alur Pengajuan (`/alur`)
+
+```
+┌─────────────────────────────────────────────────┐
+│ ‹ Beranda      Alur Pengajuan KGB               │
+├─────────────────────────────────────────────────┤
+│                                                 │
+│  [Masuk] → [Ajukan + unggah] → [Verifikasi      │
+│   NIP/NIP   1 PDF ≤5MB        Unit (Korwil/     │
+│                              SMP/SKB)]          │
+│      ↕ ditolak unit (kembali ke guru,           │
+│      ↕ perbaiki, ulang dari unit)               │
+│                                                 │
+│  [Verifikasi Dinas] → [TTE Pimpinan] → [Surat   │
+│   ✓ bukti & data      BSrE/BSSN      Terbit     │
+│   ↕ ditolak dinas                   PDF + nomor  │
+│   ↕ (ulang LANGSUNG ke dinas)       otomatis]   │
+│                                                 │
+│  Setiap langkah tercatat di audit trail.        │
+│                                                 │
+│  Legenda status:                                │
+│  ● Menunggu Verifikasi Unit                     │
+│  ● Menunggu Verifikasi Dinas                    │
+│  ● Menunggu TTE Pimpinan                        │
+│  ✕ Dikembalikan Unit / Dinas (perlu perbaikan)  │
+│  ✓ Surat Terbit                                 │
+└─────────────────────────────────────────────────┘
+```
+- Kedua halaman ini **konten statis** (PRD F-29/F-30) — tidak butuh endpoint.
 
 ### 4.1 Login (semua peran)
 
