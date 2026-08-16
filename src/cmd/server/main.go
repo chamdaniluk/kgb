@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
+	"sicendikia/internal/httpapi"
 	"sicendikia/internal/store"
 )
 
@@ -39,21 +39,15 @@ func main() {
 		log.Printf("migrasi: %d berkas diterapkan", n)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		pctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if err := pool.Ping(pctx); err != nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(map[string]string{"status": "db-down"})
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	sessionSecret := envOr("SESSION_SECRET", "")
+	if sessionSecret == "" {
+		log.Fatal("SESSION_SECRET wajib diisi (set via environment, jangan pernah di-commit)")
+	}
+	api := httpapi.New(pool, sessionSecret, envOr("SECURE_COOKIE", "true") == "true")
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           api.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	log.Printf("si-cendikia mendengarkan di %s", addr)
