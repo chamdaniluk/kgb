@@ -48,7 +48,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := store.GetUserByUsername(r.Context(), s.Pool, req.Username)
-	if err != nil || !checkPassword(user, req.Password) {
+	if err != nil || !checkPassword(user, req.Password) || !user.IsActive {
 		s.Limiter.RecordFail(key)
 		details, _ := json.Marshal(map[string]string{"username": req.Username})
 		_ = store.InsertAudit(r.Context(), s.Pool, store.AuditEntry{
