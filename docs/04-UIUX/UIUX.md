@@ -1,6 +1,6 @@
-# UI/UX — SI CENDIKIA v0.2 (DRAF)
+# UI/UX — SI CENDIKIA v1.0 (FINAL)
 
-> Fase 4 dari 6. Sumber: PRD v1.4 + ERD v1.0 FINAL + API v1.1. Menunggu review owner.
+> Fase 4 dari 6 — **FINAL, disetujui owner 2026-08-16**. Sumber: PRD v1.4 + ERD v1.0 FINAL + API v1.1.
 
 ## 1. Prinsip Desain
 
