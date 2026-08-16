@@ -82,6 +82,8 @@ venv/
 *.test
 *.out
 vendor/
+# Binary hasil build SI CENDIKIA
+/src/si-cendikia-server
 
 # ---------- Claude Code / Agent lokal ----------
 # File sesi & state lokal agent tidak boleh masuk repo
