@@ -64,8 +64,8 @@ PRD  >  DATABASE ERD  >  API DOCUMENTATION  >  UI/UX  >  ARCHITECTURE  >  TECH S
 - **SI CENDIKIA** = Sistem Cepat Efektif Non-stop Digital Informasi Kenaikan Gaji Berkala ASN. Sistem baru yang lebih sederhana & ringan untuk menerbitkan surat/SK KGB ASN (PNS & PPPK) Dinas Pendidikan Grobogan; piloting khusus guru.
 - Alur inti (brief owner): login NIP → submit pengajuan + unggah PDF maks 5MB → verifikasi unit (Korwil/SMP/SKB) → verifikasi Dinas → TTE pimpinan → surat terbit PDF.
 - Sistem live e-KGB: `kgb.grobogankab.web.id`, source `/var/www/ekgb` (CI 4.7 + Shield + PostgreSQL 16 + Dompdf) — hanya referensi domain, read-only.
-- PRD draf: `docs/01-PRD/PRD.md` — baca dulu, termasuk open questions, sebelum mengusulkan desain apa pun.
-- Data guru berasal dari sumber resmi: **Dapodik/PTK** (Kemendikdasmen, API publik api.data.belajar.id). Verifikasi kemutakhiran data sebelum mengutip. Jangan pernah mengarang data guru.
+- PRD final: `docs/01-PRD/PRD.md` — baca dulu sebelum mengusulkan desain apa pun.
+- Master data ASN: **impor file BKN milik Dinas Pendidikan** sekali di awal (seeding); perubahan data selanjutnya hanya lewat pengajuan KGB. Jangan pernah mengarang data guru. Untuk data pendidikan umum lainnya yang perlu dikutip, verifikasi dari sumber resmi (Dapodik/Kemendikdasmen, Pusmendik, BPS) sebelum dipakai.
 - Keputusan besar ada di `docs/00-DECISIONS.md` — baca dulu sebelum mengusulkan arsitektur.
 
 ## ATURAN #4 — CARA KERJA
