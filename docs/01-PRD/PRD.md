@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Versi | 1.0 (final — seluruh open question telah diputuskan owner, 2026-08-16) |
+| Versi | 1.1 (final — v1.0 + fitur perubahan data kepegawaian; keputusan owner 2026-08-16) |
 | Tanggal | 2026-08-16 |
 | Owner | Chamdani — Dinas Pendidikan Kabupaten Grobogan |
 | Status | Fase 1 dari 6 SELESAI ✅ — lanjut DATABASE ERD |
@@ -52,6 +52,8 @@ Sistem e-KGB live (`kgb.grobogankab.web.id`) berfungsi sebagai referensi domain,
 8. **Penerbitan** — Surat/SK final diterbitkan sebagai **PDF**, dapat diunduh ASN dan Dinas.
 9. **Audit trail** — Setiap perubahan status, pemeriksaan, dan unduhan dicatat.
 
+> **Pemeliharaan data**: impor file BKN hanya dilakukan sekali di awal sebagai seeding master data. Setelah itu, pemutakhiran data kepegawaian dilakukan lewat pengajuan perubahan oleh guru, diverifikasi Dinas dengan bukti berkas (lihat §5.6).
+
 ## 5. Kebutuhan Fungsional
 
 ### 5.1 Autentikasi & Otorisasi
@@ -80,10 +82,18 @@ Sistem e-KGB live (`kgb.grobogankab.web.id`) berfungsi sebagai referensi domain,
 - F-17 Surat final tidak dapat diubah (immutable); unduhan dicatat.
 
 ### 5.5 Administrasi
-- F-18 Admin mengelola master data ASN melalui **impor file BKN** milik Dinas Pendidikan (nama, NIP, status PNS/PPPK, unit kerja, golongan/ruang, gaji pokok, TMT KGB terakhir).
+- F-18 Admin melakukan **impor file BKN sekali di awal** untuk seeding master data ASN (nama, NIP, status PNS/PPPK, unit kerja, golongan/ruang, gaji pokok, TMT KGB terakhir). Setelah seeding, pemutakhiran lewat mekanisme §5.6.
 - F-19 Admin mengelola unit kerja (Korwil/SMP/SKB) dan menugaskan verifikator.
 - F-20 Admin menunjuk pejabat TTE.
 - F-21 Audit trail dapat dilihat admin untuk semua pengajuan.
+
+### 5.6 Perubahan Data Kepegawaian (setelah seeding)
+- F-22 Guru dapat mengajukan **perubahan data kepegawaiannya sendiri** (mis. pangkat/golongan, gaji pokok, unit kerja, TMT KGB terakhir) dengan mengisi nilai baru.
+- F-23 Setiap perubahan wajib melampirkan **bukti berkas PDF, maksimal 5MB** (mis. SK pangkat baru, SK mutasi).
+- F-24 Perubahan bersifat **tidak aktif sampai disetujui Dinas**: data master guru baru diperbarui setelah persetujuan (mengikuti pola "Persetujuan Perubahan Profil" e-KGB).
+- F-25 Verifikator Dinas menyetujui atau menolak perubahan dengan catatan; penolakan wajib disertai alasan.
+- F-26 Semua permintaan perubahan tercatat di audit trail: siapa, kapan, field apa, nilai lama → baru, keputusan, catatan.
+- F-27 Permintaan perubahan yang masih menunggu **tidak memblokir** pengajuan KGB (pengajuan memakai snapshot data saat submit).
 
 ## 6. Kebutuhan Non-Fungsional
 
@@ -111,7 +121,7 @@ Sistem e-KGB live (`kgb.grobogankab.web.id`) berfungsi sebagai referensi domain,
 | 1 | Kebijakan login ASN | **NIP sebagai username DAN NIP sebagai password**, seperti itu seterusnya. (Dicatat sebagai risiko yang diterima; mitigasi via rate-limiting F-4 dan hashing NF-5) |
 | 2 | Berkas wajib | **Satu berkas PDF saja** per pengajuan, maksimal 5MB |
 | 3 | Mekanisme TTE | **Sertifikat elektronik BSrE/BSSN** (kedepannya; desain harus mengakomodasi) |
-| 4 | Sumber data guru | **File BKN milik Dinas Pendidikan** (impor berkala oleh admin) |
+| 4 | Sumber data guru | **File BKN milik Dinas Pendidikan** — impor **hanya sekali di awal** sebagai seeding; pemutakhiran selanjutnya lewat pengajuan perubahan guru + verifikasi Dinas dengan bukti berkas |
 | 5 | Format surat | **Mengikuti template e-KGB** yang sudah ada (acuan resmi) |
 
 ## 9. Lampiran: Referensi Domain (dari sistem live)

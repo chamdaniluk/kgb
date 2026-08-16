@@ -1,14 +1,15 @@
-# DATABASE ERD — SI CENDIKIA v0.1 (DRAF)
+# DATABASE ERD — SI CENDIKIA v0.2 (DRAF)
 
-> Fase 2 dari 6. Sumber: PRD v1.0 (final) + referensi sistem e-KGB. Menunggu review owner.
+> Fase 2 dari 6. Sumber: PRD v1.1 (final) + referensi sistem e-KGB. Menunggu review owner.
 
 ## 1. Prinsip Desain
 
-1. **Sederhana & ringan** (NF-1, NF-2): 8 tabel total, monolitik, tanpa tabel yang "suatu hari mungkin berguna".
+1. **Sederhana & ringan** (NF-1, NF-2): 9 tabel total, monolitik, tanpa tabel yang "suatu hari mungkin berguna".
 2. **Snapshot data penting**: pengajuan menyimpan salinan gaji saat diajukan, agar perubahan master data BKN di kemudian hari tidak mengubah surat yang sudah terbit.
 3. **Satu berkas = kolom pada pengajuan**: keputusan owner menetapkan tepat 1 PDF per pengajuan, maka tidak perlu tabel lampiran terpisah (lebih sederhana, lebih sedikit join).
 4. **Audit trail terpisah**: semua aksi dicatat di satu tabel log yang tidak pernah di-update/dihapus.
 5. Surat final **immutable**: baris `letters` tidak pernah diubah setelah terbit.
+6. **Perubahan data guru tidak langsung aktif**: permintaan masuk `teacher_changes` dan baru diterapkan ke `teachers` setelah disetujui Dinas (PRD F-22..F-27).
 
 ## 2. Diagram ER (Mermaid)
 
@@ -22,6 +23,8 @@ erDiagram
     users ||--o{ audit_logs : "aktor"
     submissions ||--o{ audit_logs : "objek"
     users ||--o{ bkn_imports : "pelaksana impor"
+    teachers ||--o{ teacher_changes : "meminta perubahan"
+    users ||--o{ teacher_changes : "peninjau dinas"
 
     units {
         int id PK
@@ -114,6 +117,22 @@ erDiagram
         int masa_kerja_tahun UK
         numeric gaji
     }
+
+    teacher_changes {
+        int id PK
+        int teacher_id FK
+        string field_name "pangkat_gol|gaji_pokok|unit_id|tmt_kgb_last|..."
+        string old_value "nilai lama (teks)"
+        string new_value "nilai baru (teks)"
+        string status "menunggu|disetujui|ditolak"
+        string evidence_file_name "bukti PDF maks 5MB"
+        string evidence_file_path
+        int evidence_file_size
+        int reviewed_by FK "verifikator dinas"
+        text note "catatan wajib saat tolak"
+        timestamptz created_at
+        timestamptz reviewed_at
+    }
 ```
 
 ## 3. Mesin Status Pengajuan
@@ -144,15 +163,16 @@ Nilai kolom `submissions.status`: `menunggu_unit`, `menunggu_dinas`, `menunggu_t
 | `submissions` | `current_salary`/`next_salary` di-snapshot saat submit. `file_*` wajib terisi sebelum status meninggalkan draf. ASN boleh punya beberapa pengajuan historis (KGB tiap 2 tahun), tapi hanya satu yang aktif berproses (enforced di aplikasi). |
 | `letters` | Satu surat per pengajuan (`submission_id` UNIQUE). `number` mengikuti tata nomor surat dinas (lihat §6). Setelah `issued_at` terisi, baris tidak boleh diubah. |
 | `audit_logs` | Append-only. Minimal action: `login`, `login_gagal`, `submit`, `setuju_unit`, `tolak_unit`, `setuju_dinas`, `tolak_dinas`, `tte`, `terbit`, `unduh_berkas`, `unduh_surat`, `impor_bkn`. |
-| `bkn_imports` | Riwayat impor untuk keterlacakan admin. |
-| `salary_scales` | Tabel referensi skala gaji pokok (golongan × masa kerja) untuk menghitung `next_salary` otomatis; di-seed dari peraturan gaji yang berlaku. Bisa dinonaktifkan jika file BKN sudah memuat gaji berikutnya. |
+| `bkn_imports` | Riwayat impor untuk keterlacakan admin. Impor hanya sekali di awal (seeding); pemutakhiran selanjutnya lewat `teacher_changes`. |
+| `teacher_changes` | Permintaan perubahan data oleh guru (PRD F-22..F-27), mengikuti pola "Persetujuan Perubahan Profil" e-KGB. Nilai disimpan sebagai teks generik per field (satu baris per field yang diubah); saat `status = disetujui`, aplikasi menyalin `new_value` ke `teachers`. Bukti berkas PDF (maks 5MB) wajib. Tidak memblokir pengajuan KGB (snapshot). |
+| `salary_scales` | Tabel referensi skala gaji pokok (golongan × masa kerja) untuk menghitung `next_salary` otomatis; di-seed dari peraturan gaji yang berlaku. Bisa dinonaktifkan jika master data sudah memuat gaji berikutnya. |
 
 ## 5. Indeks & Batasan Penting
 
 - `users(username)` UNIQUE, `teachers(nip)` UNIQUE, `teachers(user_id)` UNIQUE
 - `letters(number)` UNIQUE, `letters(submission_id)` UNIQUE
 - `salary_scales(golongan, masa_kerja_tahun)` UNIQUE
-- Indeks query panas: `submissions(status)`, `submissions(teacher_id)`, `teachers(unit_id)`, `audit_logs(submission_id, created_at)`
+- Indeks query panas: `submissions(status)`, `submissions(teacher_id)`, `teachers(unit_id)`, `audit_logs(submission_id, created_at)`, `teacher_changes(teacher_id)`, `teacher_changes(status)`
 - FK `submissions.teacher_id`, `letters.submission_id`, `audit_logs.submission_id`
 
 ## 6. Item yang Perlu Diputuskan Sebelum Skema Final

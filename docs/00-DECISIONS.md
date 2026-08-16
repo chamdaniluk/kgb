@@ -17,3 +17,4 @@ Catatan keputusan penting. Format: tanggal, keputusan, alasan, konsekuensi.
 | 2026-08-16 | TTE memakai sertifikat elektronik **BSrE/BSSN** (kedepannya) | Keputusan owner | Arsitektur harus mengakomodasi integrasi layanan TTE BSrE |
 | 2026-08-16 | Master data ASN dari **file BKN milik Dinas Pendidikan** (impor) | Keputusan owner | Perlu fitur impor file BKN oleh admin; tanpa integrasi live ke Dapodik/BKN |
 | 2026-08-16 | Format surat mengikuti **template e-KGB** | Keputusan owner (acuan resmi) | Template divariabelkan: nomor, nama, NIP, unit, TMT, gaji lama→baru, tanggal terbit |
+| 2026-08-16 | Impor BKN **hanya sekali di awal** (seeding); pemutakhiran data lewat pengajuan perubahan guru + verifikasi Dinas dengan bukti berkas | Keputusan owner | PRD v1.1 menambah F-22..F-27; ERD v0.2 menambah tabel `teacher_changes` |
