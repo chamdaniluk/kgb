@@ -1,6 +1,6 @@
-# API DOCUMENTATION — SI CENDIKIA v1.1 (FINAL)
+# API DOCUMENTATION — SI CENDIKIA v1.2 (FINAL)
 
-> Fase 3 dari 6 — **FINAL (v1.1: + endpoint statistik publik), disetujui owner 2026-08-16**. Sumber: PRD v1.4 + ERD v1.0 FINAL.
+> Fase 3 dari 6 — **FINAL (v1.2: TTE via eSign Kominfo), disetujui owner 2026-08-16**. Sumber: PRD v1.6 + ERD v1.0 FINAL.
 > Konvensi teknis final (framework, bentuk token, dsb.) diputuskan di fase TECH STACK; dokumen ini mendefinisikan **kontrak** yang harus dipenuhi implementasi apa pun.
 
 ## 1. Konvensi Umum
@@ -143,16 +143,18 @@ Pengajuan berstatus `menunggu_tte` beserta pratinjau konsep surat.
 
 ### `POST /letters/{submission_id}/sign` — TTE + terbitkan
 ```json
-{ "credential_ref": "..." }   // referensi kredensial BSrE/BSSN pimpinan (mekanisme detail: fase ARCHITECTURE)
+{ "passphrase": "..." }   // passphrase eSign pimpinan (diinput pimpinan, tidak pernah disimpan)
 ```
 Proses (transaksi atomik):
 1. Generate nomor dari `letter_number_templates` aktif (`{SEQ}` per tahun, `{YEAR}`).
 2. Render PDF dari template e-KGB dengan data snapshot.
-3. TTE BSrE/BSSN (kedepannya; sebelum integrasi tersedia, mode simulasi dengan penanda).
-4. Insert `letters`, status pengajuan → `terbit`, master `teachers` diperbarui (`tmt_kgb_last ← proposed_tmt`).
+3. Panggil **eSign Kominfo** `POST /api/v2/sign/pdf` (mode VISIBLE, NIK pimpinan + passphrase, TTD base64, posisi blok ttd, file = base64 PDF konsep) — detail pola di PRD §10.
+4. Simpan `id_dokumen` respons eSign ke `letters.tte_receipt_id`.
+5. `GET /api/sign/download/{id_dokumen}` → simpan PDF final.
+6. Insert `letters`, status pengajuan → `terbit`, master `teachers` diperbarui (`tmt_kgb_last ← proposed_tmt`).
 
 → `201` `{ "data": { "number": "800/001/4.2/2026", "issued_at": "..." } }`
-→ `502/422` `TTE_FAILED` jika layanan TTE gagal (pengajuan tetap `menunggu_tte`).
+→ `502/422` `TTE_FAILED` jika layanan eSign gagal (pengajuan tetap `menunggu_tte`).
 Audit: `tte`, `terbit`.
 
 ## 8. Unduhan Surat

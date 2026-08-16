@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Versi | 1.5 (final — v1.4 + skema akun petugas resmi, username petugas ≠ NIP; keputusan owner 2026-08-16) |
+| Versi | 1.6 (final — v1.5 + TTE via API eSign Kominfo; keputusan owner 2026-08-16) |
 | Tanggal | 2026-08-16 |
 | Owner | Chamdani — Dinas Pendidikan Kabupaten Grobogan |
 | Status | Fase 1 dari 6 SELESAI ✅ — lanjut DATABASE ERD |
@@ -78,7 +78,7 @@ Sistem e-KGB live (`kgb.grobogankab.web.id`) berfungsi sebagai referensi domain,
 
 ### 5.4 TTE & Penerbitan
 - F-14 Konsep surat/SK KGB dibuat otomatis dari data pengajuan yang disetujui, mengikuti template e-KGB (kop Dinas Pendidikan Grobogan; isi memuat nama, NIP, unit kerja, TMT, gaji lama → gaji baru; blok tanda tangan Kepala Dinas; footer keaslian dokumen).
-- F-15 Pimpinan melakukan TTE dengan **sertifikat elektronik BSrE/BSSN**.
+- F-15 Pimpinan melakukan TTE melalui **layanan eSign Kominfo (BSrE/BSSN)** — API resmi "Esign Client Service for User 2.2.2" (dokumentasi & contoh dari Kominfo tersimpan di `local/esign-kominfo/`). Mode tanda tangan **VISIBLE** (spesimen gambar TTD pimpinan) pada halaman konsep; identifikasi via **NIK + passphrase** pimpinan (passphrase diinput pimpinan tiap menandatangani, tidak disimpan).
 - F-16 Setelah TTE, surat final berformat PDF diterbitkan dengan **nomor otomatis yang dihasilkan dari template nomor surat**; template tersebut dapat diisi/diatur oleh Dinas (mis. pola nomor urut, kode, tahun).
 - F-17 Surat final tidak dapat diubah (immutable); unduhan dicatat.
 
@@ -123,7 +123,7 @@ Sistem e-KGB live (`kgb.grobogankab.web.id`) berfungsi sebagai referensi domain,
 |---|---|---|
 | 1 | Kebijakan login ASN | **NIP sebagai username DAN NIP sebagai password**, seperti itu seterusnya. (Dicatat sebagai risiko yang diterima; mitigasi via rate-limiting F-4 dan hashing NF-5) |
 | 2 | Berkas wajib | **Satu berkas PDF saja** per pengajuan, maksimal 5MB |
-| 3 | Mekanisme TTE | **Sertifikat elektronik BSrE/BSSN** (kedepannya; desain harus mengakomodasi) |
+| 3 | Mekanisme TTE | **eSign Kominfo (BSrE/BSSN)** — API resmi "Esign Client Service for User 2.2.2"; mode VISIBLE, NIK + passphrase pimpinan; dokumentasi Postman + contoh PDF dari Kominfo di `local/esign-kominfo/`; env dev `esign-dev.layanan.go.id` |
 | 4 | Sumber data guru | **File BKN milik Dinas Pendidikan** — impor **hanya sekali di awal** sebagai seeding; perubahan data selanjutnya dilakukan **melalui pengajuan KGB** sekalian bukti dukung & kelengkapan berkas (nilai yang terbit otomatis memperbarui master data) |
 | 5 | Format surat | **Mengikuti template e-KGB** yang sudah ada (acuan resmi) |
 | 6 | Submit ulang setelah ditolak | **Ditolak Korwil/unit → ulang dari unit; ditolak Dinas → langsung dari Dinas** |
@@ -138,3 +138,30 @@ Fakta yang dikonfirmasi dari source e-KGB (read-only):
 - Formulir pengajuan memuat field: `proposed_tmt`, `sk_kgb`, `skp`, `sk_pangkat`, `skp_predikat_sebelumnya`, `skp_predikat_terakhir`, `declared_no_block`.
 - Output surat dinamai `surat-kgb-{id}.pdf` dan diunduh melalui endpoint terotorisasi.
 - Autentikasi sistem live memakai CodeIgniter Shield (session, group, permission).
+
+## 10. Referensi eSign Kominfo (dari arsip Kominfo)
+
+Dokumentasi API resmi ada di `local/esign-kominfo/` (tidak di-commit):
+
+- **Postman collection**: `Esign-Client-Service for User 2.2.2 - latest.postman_collection.json`
+- **Environment dev**: `Esign Client Dev for User.postman_environment.json` (berisi kredensial uji — JANGAN dibaca/di-commit oleh agent)
+- **Contoh dokumen**: `Contoh-Dokumen-Tag/` (file.pdf, file1.pdf, LetterWithTag3_dollar.pdf, dan PDF yang sudah ditandatangani)
+
+Endpoint utama:
+| Method & Path | Fungsi |
+|---|---|
+| `GET /api/user/status/{nik}` | Cek status NIK (Basic Auth) |
+| `POST /api/sign/pdf` | Sign PDF v1 (form-data: file, nik, passphrase, tampilan, imageTTD/linkQR, posisi) |
+| `GET /api/sign/download/{id_dokumen}` | Unduh PDF hasil sign |
+| `POST /api/sign/verify` | Verifikasi dokumen tersign |
+| `POST /api/v2/sign/get/totp` | Minta OTP (Basic Auth) |
+| `POST /api/v2/sign/pdf` | Sign PDF v2 (JSON: nik/email + totp/passphrase; signatureProperties: imageBase64, tampilan VISIBLE/INVISIBLE, page, originX/Y, width, height) |
+| `POST /api/v2/user/check/status` | Cek status user |
+
+Pola alur untuk SI CENDIKIA (NIK + passphrase, mode VISIBLE):
+1. Render konsep surat → PDF.
+2. `POST /api/v2/sign/pdf` dengan `nik` pimpinan, `passphrase` (diinput pimpinan), `signatureProperties[0]` = {imageBase64 TTD pimpinan, tampilan VISIBLE, page 1, posisi blok ttd}, `file` = base64 PDF konsep.
+3. Simpan `id_dokumen` respons ke `letters.tte_receipt_id`.
+4. `GET /api/sign/download/{id_dokumen}` → simpan PDF final (immutable).
+
+> ⚠️ Kredensial di environment Postman adalah data uji Kominfo — tidak pernah boleh dibaca/di-commit agent (masuk daftar FORBIDDEN via `local/`).

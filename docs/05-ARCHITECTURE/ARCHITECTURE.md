@@ -1,6 +1,6 @@
-# ARCHITECTURE — SI CENDIKIA v1.0 (FINAL)
+# ARCHITECTURE — SI CENDIKIA v1.1 (FINAL)
 
-> Fase 5 dari 6 — **FINAL, disetujui owner 2026-08-16**. Sumber: PRD v1.5, ERD v1.0 FINAL, API v1.1, UI/UX v1.0.
+> Fase 5 dari 6 — **FINAL (v1.1: TTE via eSign Kominfo), disetujui owner 2026-08-16**. Sumber: PRD v1.6, ERD v1.0 FINAL, API v1.2, UI/UX v1.0.
 
 ## 1. Tujuan dan Prinsip Arsitektur
 
@@ -103,14 +103,22 @@ sequenceDiagram
 | A-4 | Gaji dihitung saat submit dan di-snapshot | ERD §2 prinsip #2 | Perubahan skala gaji tidak mengubah surat yang sudah terbit |
 | A-5 | Status cukup satu kolom + riwayat di audit | Keputusan owner (submit ulang unit vs dinas) | Mesin status sederhana, tidak ada kolom versi berulang |
 | A-6 | `GET /public/stats` di-cache 5 menit | Data agregat jarang berubah | Beban rendah; tanpa cache perlu hitung ulang tiap request |
-| A-7 | TTE BSrE terisolasi di belakang satu fungsi/interface | Integrasi "kedepannya"; mudah ganti simulasi → asli | Aplikasi lain tidak tahu detail mekanisme TTE |
+| A-7 | TTE eSign Kominfo terisolasi di belakang satu fungsi/interface | Mudah ganti environment dev/prod & debugging | Aplikasi lain tidak tahu detail mekanisme TTE |
 
-## 6. Integrasi TTE BSrE/BSSN (Kedepannya)
+## 6. Integrasi TTE eSign Kominfo (BSrE/BSSN)
 
-- Saat ini: **mode simulasi** — konsep surat ditandatangani dengan placeholder (mis. teks "Dokumen ditandatangani secara elektronik" + nama pejabat + waktu), sudah menghasilkan PDF yang valid untuk uji alur.
-- Kedepannya: panggil layanan TTE BSrE/BSSN dengan sertifikat elektronik pimpinan. Integrasi diisolasi dalam satu modul; kontrak API-nya tidak mengubah alur aplikasi (API v1.1 §7 tetap berlaku).
-- Desain kolom `letters.tte_receipt_id` sudah disiapkan untuk menyimpan resi/ID dari layanan TTE.
-- Jika TTE gagal: pengajuan tetap `menunggu_tte`, pesan error jelas, tidak ada data setengah terbit (transaksi atomik di service surat).
+TTE memakai **layanan resmi eSign Kominfo** — API "Esign Client Service for User 2.2.2" (arsip Kominfo di `local/esign-kominfo/`, tidak di-commit). Ini integrasi nyata, bukan mode simulasi:
+
+- **Env dev**: `https://esign-dev.layanan.go.id` (kredensial uji ada di environment Postman, lokal saja).
+- **Alur** (detail pola di PRD §10):
+  1. Render konsep surat → PDF (`wkhtmltopdf`).
+  2. Pimpinan menginput passphrase di layar TTE (tidak disimpan).
+  3. `POST /api/v2/sign/pdf` — body JSON: `nik` pimpinan, `passphrase`, `signatureProperties[0]` = {imageBase64 TTD pimpinan, tampilan VISIBLE, page 1, originX/originY/width/height sesuai blok ttd template}, `file` = base64 PDF.
+  4. Simpan `id_dokumen` → `letters.tte_receipt_id`.
+  5. `GET /api/sign/download/{id_dokumen}` → PDF final tersimpan (immutable).
+- **Dasar auth aplikasi ke eSign**: Basic Auth (username/password eSign milik Dinas) untuk endpoint yang memerlukan; dikonfigurasi di `.env` aplikasi, tidak pernah di-commit.
+- **Kegagalan**: pengajuan tetap `menunggu_tte`, pesan error jelas, tidak ada data setengah terbit (transaksi atomik).
+- **Verifikasi** (opsional, ke depan): `POST /api/sign/verify` untuk audit keaslian PDF tersign.
 
 ## 7. Keamanan
 
