@@ -1,6 +1,6 @@
-# ARCHITECTURE — SI CENDIKIA v0.1 (DRAF)
+# ARCHITECTURE — SI CENDIKIA v1.0 (FINAL)
 
-> Fase 5 dari 6. Sumber: PRD v1.4, ERD v1.0 FINAL, API v1.1, UI/UX v1.0. Menunggu review owner.
+> Fase 5 dari 6 — **FINAL, disetujui owner 2026-08-16**. Sumber: PRD v1.5, ERD v1.0 FINAL, API v1.1, UI/UX v1.0.
 
 ## 1. Tujuan dan Prinsip Arsitektur
 
