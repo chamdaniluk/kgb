@@ -10,7 +10,7 @@ import (
 
 // ListUnits mengambil semua unit kerja beserta parent Korwil bila ada.
 func ListUnits(ctx context.Context, pool *pgxpool.Pool) ([]Unit, error) {
-	rows, err := pool.Query(ctx, `SELECT u.id, u.code, u.name, u.type, u.parent_id, p.name, u.created_at, u.updated_at FROM units u LEFT JOIN units p ON p.id=u.parent_id ORDER BY u.name`)
+	rows, err := pool.Query(ctx, `SELECT u.id, u.code, u.name, u.type, u.parent_id, COALESCE(p.name,''), u.created_at, u.updated_at FROM units u LEFT JOIN units p ON p.id=u.parent_id ORDER BY u.name`)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +43,7 @@ func createUnit(ctx context.Context, pool *pgxpool.Pool, code, name, unitType st
 // GetUnitByID mengambil unit beserta parent-nya.
 func GetUnitByID(ctx context.Context, pool *pgxpool.Pool, id int64) (Unit, error) {
 	var u Unit
-	err := pool.QueryRow(ctx, `SELECT u.id, u.code, u.name, u.type, u.parent_id, p.name, u.created_at, u.updated_at FROM units u LEFT JOIN units p ON p.id=u.parent_id WHERE u.id=$1`, id).
+	err := pool.QueryRow(ctx, `SELECT u.id, u.code, u.name, u.type, u.parent_id, COALESCE(p.name,''), u.created_at, u.updated_at FROM units u LEFT JOIN units p ON p.id=u.parent_id WHERE u.id=$1`, id).
 		Scan(&u.ID, &u.Code, &u.Name, &u.Type, &u.ParentID, &u.ParentName, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Unit{}, ErrNotFound
