@@ -38,14 +38,7 @@ func ImportTeachers(ctx context.Context, pool *pgxpool.Pool, actorID int64, file
 			result.RowsUpdated++
 		}
 	}
-	notes := ""
-	for _, note := range result.Notes {
-		if notes != "" {
-			notes += "\n"
-		}
-		notes += note
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO bkn_imports (file_name, imported_by, rows_total, rows_created, rows_updated, rows_skipped, notes) VALUES ($1,$2,$3,$4,$5,$6,$7)`, fileName, actorID, result.RowsTotal, result.RowsCreated, result.RowsUpdated, result.RowsSkipped, nullIfEmpty(notes)); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO bkn_imports (file_name, imported_by, rows_total, rows_created, rows_updated, rows_skipped, notes) VALUES ($1,$2,$3,$4,$5,$6,$7)`, fileName, actorID, result.RowsTotal, result.RowsCreated, result.RowsUpdated, result.RowsSkipped, nullIfEmpty(joinNotes(result.Notes))); err != nil {
 		return ImportResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -68,7 +61,7 @@ func ImportStaffUsers(ctx context.Context, pool *pgxpool.Pool, actorID int64, us
 			result.Notes = append(result.Notes, fmt.Sprintf("baris %d: username, password, nama, dan role wajib", i+2))
 			continue
 		}
-		if item.Role == "asn" || (item.Role != "verifikator_unit" && item.Role != "verifikator_dinas" && item.Role != "pimpinan" && item.Role != "admin") {
+		if item.Role == "asn" || !isStaffRole(item.Role) {
 			result.RowsSkipped++
 			result.Notes = append(result.Notes, fmt.Sprintf("baris %d: role petugas tidak valid", i+2))
 			continue
@@ -88,23 +81,26 @@ func ImportStaffUsers(ctx context.Context, pool *pgxpool.Pool, actorID int64, us
 		if roleErr != nil && !errors.Is(roleErr, pgx.ErrNoRows) {
 			return ImportResult{}, roleErr
 		}
-		var collision bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM teachers WHERE nip=$1)`, item.Username).Scan(&collision); err != nil {
-			return ImportResult{}, err
-		}
-		if collision {
-			result.RowsSkipped++
-			result.Notes = append(result.Notes, fmt.Sprintf("baris %d: username petugas sama dengan NIP", i+2))
-			continue
-		}
 		var unitID any
 		if item.UnitCode != "" {
 			unitType := item.UnitType
 			if unitType == "" {
 				unitType = "smp"
 			}
+			var parentID any
+			if item.ParentUnitCode != "" {
+				if err := tx.QueryRow(ctx, `
+					INSERT INTO units (code,name,type,parent_id) VALUES ($1,$2,'korwil',NULL)
+					ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,type='korwil',parent_id=NULL,updated_at=now()
+					RETURNING id`, item.ParentUnitCode, item.ParentUnitName).Scan(&parentID); err != nil {
+					return ImportResult{}, fmt.Errorf("unit parent baris %d: %w", i+2, err)
+				}
+			}
 			var id int64
-			if err := tx.QueryRow(ctx, `INSERT INTO units (code,name,type) VALUES ($1,$2,$3) ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,type=EXCLUDED.type,updated_at=now() RETURNING id`, item.UnitCode, item.UnitName, unitType).Scan(&id); err != nil {
+			if err := tx.QueryRow(ctx, `
+				INSERT INTO units (code,name,type,parent_id) VALUES ($1,$2,$3,$4)
+				ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,type=EXCLUDED.type,parent_id=EXCLUDED.parent_id,updated_at=now()
+				RETURNING id`, item.UnitCode, item.UnitName, unitType, parentID).Scan(&id); err != nil {
 				return ImportResult{}, err
 			}
 			unitID = id
@@ -117,8 +113,15 @@ func ImportStaffUsers(ctx context.Context, pool *pgxpool.Pool, actorID int64, us
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE username=$1)`, item.Username).Scan(&existed); err != nil {
 			return ImportResult{}, err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO users (username,password_hash,role,name,unit_id,nik,signature_image_base64) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,'')) ON CONFLICT(username) DO UPDATE SET password_hash=EXCLUDED.password_hash,role=EXCLUDED.role,name=EXCLUDED.name,unit_id=EXCLUDED.unit_id,nik=EXCLUDED.nik,signature_image_base64=EXCLUDED.signature_image_base64,is_active=true,updated_at=now()`, item.Username, hash, item.Role, item.Name, unitID, item.NIK, item.SignatureImageBase64); err != nil {
+		active := item.Role != StaffRolePimpinan || (item.NIK != "" && item.SignatureImageBase64 != "")
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO users (username,password_hash,role,name,unit_id,nik,signature_image_base64,is_active)
+			VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),$8)
+			ON CONFLICT(username) DO UPDATE SET password_hash=EXCLUDED.password_hash,role=EXCLUDED.role,name=EXCLUDED.name,unit_id=EXCLUDED.unit_id,nik=EXCLUDED.nik,signature_image_base64=EXCLUDED.signature_image_base64,is_active=EXCLUDED.is_active,updated_at=now()`, item.Username, hash, item.Role, item.Name, unitID, item.NIK, item.SignatureImageBase64, active); err != nil {
 			return ImportResult{}, fmt.Errorf("baris %d: %w", i+2, err)
+		}
+		if item.NeedsSignerProfile && !active {
+			result.Notes = append(result.Notes, fmt.Sprintf("baris %d: Admin TTE dibuat nonaktif sampai NIK dan spesimen TTD tersedia", i+2))
 		}
 		if existed {
 			result.RowsUpdated++
@@ -126,7 +129,10 @@ func ImportStaffUsers(ctx context.Context, pool *pgxpool.Pool, actorID int64, us
 			result.RowsCreated++
 		}
 	}
-	details, _ := json.Marshal(map[string]any{"rows_total": result.RowsTotal, "rows_created": result.RowsCreated, "rows_updated": result.RowsUpdated, "rows_skipped": result.RowsSkipped})
+	details, err := json.Marshal(map[string]any{"rows_total": result.RowsTotal, "rows_created": result.RowsCreated, "rows_updated": result.RowsUpdated, "rows_skipped": result.RowsSkipped})
+	if err != nil {
+		return ImportResult{}, err
+	}
 	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs (actor_user_id,action,details) VALUES ($1,'impor_akun_petugas',$2)`, actorID, details); err != nil {
 		return ImportResult{}, err
 	}
@@ -134,4 +140,19 @@ func ImportStaffUsers(ctx context.Context, pool *pgxpool.Pool, actorID int64, us
 		return ImportResult{}, err
 	}
 	return result, nil
+}
+
+func isStaffRole(role string) bool {
+	return IsStaffRole(role)
+}
+
+func joinNotes(notes []string) string {
+	result := ""
+	for _, note := range notes {
+		if result != "" {
+			result += "\n"
+		}
+		result += note
+	}
+	return result
 }

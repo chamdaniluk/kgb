@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,43 @@ import (
 )
 
 const maxImportSize int64 = 32 << 20
+
+var institutionCodePattern = regexp.MustCompile(`[^A-Z0-9]+`)
+
+func canonicalInstitutionName(name string) string {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	if name == "KORWILCAM GUBIG" {
+		return "KORWILCAM GUBUG"
+	}
+	return name
+}
+
+func institutionCode(name string) string {
+	name = canonicalInstitutionName(name)
+	name = institutionCodePattern.ReplaceAllString(name, "-")
+	return strings.Trim(name, "-")
+}
+
+func mapWorkbookStaffRole(role string) (string, bool, error) {
+	switch normalizeHeader(role) {
+	case "admin tte":
+		return store.StaffRolePimpinan, true, nil
+	case "admin dinas":
+		return store.StaffRoleAdminDinas, false, nil
+	case "admin korwil", "admin smp":
+		return store.StaffRoleVerifikatorUnit, false, nil
+	default:
+		return "", false, fmt.Errorf("role workbook tidak dikenal: %q", role)
+	}
+}
+
+func korwilNameFromInstitution(institution string) string {
+	parts := strings.Fields(canonicalInstitutionName(institution))
+	if len(parts) == 0 {
+		return ""
+	}
+	return canonicalInstitutionName("KORWILCAM " + parts[len(parts)-1])
+}
 
 func readTabularUpload(file multipart.File, filename string) ([][]string, error) {
 	if strings.HasSuffix(strings.ToLower(filename), ".csv") {
@@ -135,15 +173,60 @@ func parseImportStaff(rows [][]string) ([]store.ImportedStaffUser, error) {
 	idxPass := headerIndex(h, "Password", "Kata Sandi")
 	idxRole := headerIndex(h, "Role", "Peran")
 	idxName := headerIndex(h, "Nama", "Nama Petugas")
-	if idxUser < 0 || idxPass < 0 || idxRole < 0 || idxName < 0 {
-		return nil, errors.New("kolom wajib akun: username, password, role, nama")
+	idxInstitution := headerIndex(h, "Nama Institusi", "Institusi")
+	if idxUser < 0 || idxPass < 0 || idxRole < 0 {
+		return nil, errors.New("kolom wajib akun: username, password, role")
+	}
+	if idxName < 0 && idxInstitution < 0 {
+		return nil, errors.New("kolom nama institusi atau nama petugas wajib diisi")
 	}
 	result := make([]store.ImportedStaffUser, 0, len(rows)-1)
+	idxUnitCode := headerIndex(h, "Kode Unit", "Kode Sekolah")
+	idxUnitName := headerIndex(h, "Unit", "Unit Kerja", "Nama Unit")
+	idxUnitType := headerIndex(h, "Jenis Unit", "Tipe Unit")
+	idxNIK := headerIndex(h, "NIK")
+	idxSignature := headerIndex(h, "Signature Base64", "TTD Base64")
 	for _, row := range rows[1:] {
 		if cell(row, idxUser) == "" {
 			continue
 		}
-		result = append(result, store.ImportedStaffUser{Username: cell(row, idxUser), Password: cell(row, idxPass), Role: strings.ToLower(cell(row, idxRole)), Name: cell(row, idxName), UnitCode: cell(row, headerIndex(h, "Kode Unit", "Kode Sekolah")), UnitName: cell(row, headerIndex(h, "Unit", "Unit Kerja", "Nama Unit")), UnitType: cell(row, headerIndex(h, "Jenis Unit", "Tipe Unit")), NIK: cell(row, headerIndex(h, "NIK")), SignatureImageBase64: cell(row, headerIndex(h, "Signature Base64", "TTD Base64"))})
+		institution := canonicalInstitutionName(cell(row, idxInstitution))
+		role, needsSigner, err := mapWorkbookStaffRole(cell(row, idxRole))
+		if err != nil {
+			return nil, err
+		}
+		unitName := cell(row, idxUnitName)
+		unitCode := cell(row, idxUnitCode)
+		unitType := strings.ToLower(cell(row, idxUnitType))
+		parentName, parentCode := "", ""
+		if institution != "" && normalizeHeader(institution) != "dinas pendidikan" {
+			unitName = institution
+			unitCode = institutionCode(institution)
+			if normalizeHeader(cell(row, idxRole)) == "admin korwil" {
+				unitType = "korwil"
+			} else if strings.Contains(normalizeHeader(institution), "skb") {
+				unitType = "skb"
+			} else {
+				unitType = "smp"
+			}
+			if unitType == "smp" || unitType == "skb" {
+				parentName = korwilNameFromInstitution(institution)
+				parentCode = institutionCode(parentName)
+			}
+		}
+		if unitType == "" && role == store.StaffRoleVerifikatorUnit {
+			return nil, fmt.Errorf("institusi/unit wajib untuk role %q", cell(row, idxRole))
+		}
+		name := cell(row, idxName)
+		if name == "" {
+			name = institution
+		}
+		result = append(result, store.ImportedStaffUser{
+			Username: cell(row, idxUser), Password: cell(row, idxPass), Role: role, Name: name,
+			UnitCode: unitCode, UnitName: unitName, UnitType: unitType, NIK: cell(row, idxNIK),
+			SignatureImageBase64: cell(row, idxSignature), NeedsSignerProfile: needsSigner,
+			ParentUnitCode: parentCode, ParentUnitName: parentName,
+		})
 	}
 	return result, nil
 }

@@ -7,6 +7,7 @@ CREATE TABLE units (
     code       text NOT NULL UNIQUE,
     name       text NOT NULL,
     type       text NOT NULL CHECK (type IN ('korwil', 'smp', 'skb')),
+    parent_id  int REFERENCES units(id),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -15,7 +16,7 @@ CREATE TABLE users (
     id            int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     username      text NOT NULL UNIQUE,
     password_hash text NOT NULL,
-    role          text NOT NULL CHECK (role IN ('asn', 'verifikator_unit', 'verifikator_dinas', 'pimpinan', 'admin')),
+    role          text NOT NULL CHECK (role IN ('asn', 'verifikator_unit', 'verifikator_dinas', 'admin_dinas', 'pimpinan', 'admin')),
     name          text NOT NULL,
     unit_id       int REFERENCES units(id),
     is_active     boolean NOT NULL DEFAULT true,

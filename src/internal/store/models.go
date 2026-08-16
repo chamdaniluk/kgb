@@ -52,12 +52,14 @@ type AuditLog struct {
 
 // Unit adalah unit kerja verifikasi.
 type Unit struct {
-	ID        int64     `json:"id"`
-	Code      string    `json:"code"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         int64     `json:"id"`
+	Code       string    `json:"code"`
+	Name       string    `json:"name"`
+	Type       string    `json:"type"`
+	ParentID   *int64    `json:"parent_id,omitempty"`
+	ParentName string    `json:"parent_name,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // UserSummary adalah informasi akun yang aman ditampilkan admin.
@@ -124,6 +126,13 @@ type ImportedTeacher struct {
 	MasaKerjaTahun int
 	TMTKGBLast     *time.Time
 }
+
+// Staff role constants are the normalized roles used by the SI CENDIKIA account importer.
+const (
+	StaffRoleAdminDinas      = "admin_dinas"
+	StaffRolePimpinan        = "pimpinan"
+	StaffRoleVerifikatorUnit = "verifikator_unit"
+)
 
 // ImportResult merangkum hasil impor master.
 type ImportResult struct {

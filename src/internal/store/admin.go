@@ -42,8 +42,15 @@ func CreateStaffUser(ctx context.Context, pool *pgxpool.Pool, username, password
 	if IsNIPUsername(username) {
 		return UserSummary{}, errors.New("username petugas tidak boleh berupa NIP")
 	}
-	if role != "verifikator_unit" && role != "verifikator_dinas" && role != "pimpinan" && role != "admin" {
+	if !IsStaffRole(role) {
 		return UserSummary{}, errors.New("role petugas tidak valid")
+	}
+	if name == "" {
+		name = username
+	}
+	active := true
+	if role == StaffRolePimpinan && (nik == "" || signature == "") {
+		active = false
 	}
 	var nipExists bool
 	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM teachers WHERE nip=$1)`, username).Scan(&nipExists); err != nil {
@@ -54,9 +61,9 @@ func CreateStaffUser(ctx context.Context, pool *pgxpool.Pool, username, password
 	}
 	var u UserSummary
 	err := pool.QueryRow(ctx, `
-		INSERT INTO users (username,password_hash,role,name,unit_id,nik,signature_image_base64)
-		VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''))
-		RETURNING id, username, role, name, unit_id, (SELECT name FROM units WHERE id=users.unit_id), is_active, last_login_at`, username, passwordHash, role, name, unitID, nik, signature).
+		INSERT INTO users (username,password_hash,role,name,unit_id,nik,signature_image_base64,is_active)
+		VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),$8)
+		RETURNING id, username, role, name, unit_id, (SELECT name FROM units WHERE id=users.unit_id), is_active, last_login_at`, username, passwordHash, role, name, unitID, nik, signature, active).
 		Scan(&u.ID, &u.Username, &u.Role, &u.Name, &u.UnitID, &u.UnitName, &u.IsActive, &u.LastLogin)
 	if IsUniqueViolation(err) {
 		return UserSummary{}, ErrConflict
@@ -64,8 +71,16 @@ func CreateStaffUser(ctx context.Context, pool *pgxpool.Pool, username, password
 	return u, err
 }
 
+// IsStaffRole reports whether role is allowed for a non-ASN account.
+func IsStaffRole(role string) bool {
+	return role == StaffRoleVerifikatorUnit || role == "verifikator_dinas" || role == StaffRoleAdminDinas || role == StaffRolePimpinan || role == "admin"
+}
+
 // UpdateStaffUser memperbarui data akun petugas; nil berarti tidak mengubah field.
 func UpdateStaffUser(ctx context.Context, pool *pgxpool.Pool, id int64, name *string, role *string, unitID **int64, active *bool, passwordHash *string, nik *string, signature *string) (UserSummary, error) {
+	if role != nil && !IsStaffRole(*role) {
+		return UserSummary{}, errors.New("role petugas tidak valid")
+	}
 	var u UserSummary
 	var passwordChanged any
 	if passwordHash != nil {

@@ -11,4 +11,7 @@ type ImportedStaffUser struct {
 	UnitType             string
 	NIK                  string
 	SignatureImageBase64 string
+	NeedsSignerProfile   bool
+	ParentUnitCode       string
+	ParentUnitName       string
 }

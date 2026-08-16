@@ -97,7 +97,7 @@ func ListQueue(ctx context.Context, pool *pgxpool.Pool, role string, unitID *int
 		if unitID == nil {
 			return nil, ErrForbidden
 		}
-		query += ` AND t.unit_id = $2`
+		query += ` AND (t.unit_id = $2 OR EXISTS (SELECT 1 FROM units scope WHERE scope.id=$2 AND scope.type='korwil' AND t.unit_id IN (SELECT id FROM units child WHERE child.parent_id=scope.id)))`
 		args = append(args, *unitID)
 	}
 	query += ` ORDER BY s.submitted_at ASC NULLS LAST, s.id ASC`

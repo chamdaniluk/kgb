@@ -60,10 +60,14 @@ func (s *Server) teacherForUser(r *http.Request) (store.Teacher, bool) {
 func (s *Server) canAccessSubmission(r *http.Request, sub store.Submission) bool {
 	u := userFrom(r)
 	switch u.Role {
-	case "admin", "pimpinan", "verifikator_dinas":
+	case "admin", "admin_dinas", "pimpinan", "verifikator_dinas":
 		return true
 	case "verifikator_unit":
-		return u.UnitID != nil && *u.UnitID == sub.UnitID
+		if u.UnitID == nil {
+			return false
+		}
+		inScope, err := store.UnitInScope(r.Context(), s.Pool, *u.UnitID, sub.UnitID)
+		return err == nil && inScope
 	case "asn":
 		t, ok := s.teacherForUser(r)
 		return ok && t.ID == sub.TeacherID
@@ -317,9 +321,17 @@ func (s *Server) reviewDetail(w http.ResponseWriter, r *http.Request, role strin
 		}
 		return store.Submission{}, false
 	}
-	if role == "verifikator_unit" && (userFrom(r).UnitID == nil || *userFrom(r).UnitID != sub.UnitID) {
-		writeErr(w, http.StatusForbidden, "FORBIDDEN", "Pengajuan bukan unit Anda.")
-		return store.Submission{}, false
+	if role == "verifikator_unit" {
+		unitID := userFrom(r).UnitID
+		if unitID == nil {
+			writeErr(w, http.StatusForbidden, "FORBIDDEN", "Akun verifikator belum memiliki scope unit.")
+			return store.Submission{}, false
+		}
+		inScope, err := store.UnitInScope(r.Context(), s.Pool, *unitID, sub.UnitID)
+		if err != nil || !inScope {
+			writeErr(w, http.StatusForbidden, "FORBIDDEN", "Pengajuan bukan dalam scope unit Anda.")
+			return store.Submission{}, false
+		}
 	}
 	return sub, true
 }
