@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Versi | 1.4 (final — v1.3 + beranda publik dengan statistik/grafik, menu tatacara & alur; keputusan owner 2026-08-16) |
+| Versi | 1.5 (final — v1.4 + skema akun petugas resmi, username petugas ≠ NIP; keputusan owner 2026-08-16) |
 | Tanggal | 2026-08-16 |
 | Owner | Chamdani — Dinas Pendidikan Kabupaten Grobogan |
 | Status | Fase 1 dari 6 SELESAI ✅ — lanjut DATABASE ERD |
@@ -58,7 +58,7 @@ Sistem e-KGB live (`kgb.grobogankab.web.id`) berfungsi sebagai referensi domain,
 
 ### 5.1 Autentikasi & Otorisasi
 - F-1 Login ASN dengan NIP sebagai username dan NIP sebagai password (kebijakan owner; password tetap di-hash saat disimpan).
-- F-2 Login petugas (unit, Dinas, pimpinan, admin) dengan akun yang dikelola admin.
+- F-2 Login petugas (unit, Dinas, pimpinan, admin) dengan akun yang dikelola admin. **Username petugas TIDAK boleh sama dengan NIP** — pola khusus (mis. `admin.tte`, `admin.disdik1`, `kwc_gbg`, `smpn1_gbg`) agar tidak bentrok dengan akun ASN yang memakai NIP sebagai username (PRD keputusan #9).
 - F-3 Pembatasan akses berbasis peran (ASN hanya melihat pengajuannya sendiri; verifikator hanya unitnya).
 - F-4 Batasi percobaan login berulang (rate limiting) untuk mencegah brute-force.
 
@@ -129,6 +129,7 @@ Sistem e-KGB live (`kgb.grobogankab.web.id`) berfungsi sebagai referensi domain,
 | 6 | Submit ulang setelah ditolak | **Ditolak Korwil/unit → ulang dari unit; ditolak Dinas → langsung dari Dinas** |
 | 7 | Nomor surat | **Otomatis dari template yang dapat diisi Dinas** (bukan format tetap di kode) |
 | 8 | Data gaji | **Tidak ada di file BKN**; dihitung dari **tabel skala gaji PNS & PPPK terbaru** sesuai masa kerja dan pangkat/golongan. PPPK guru pangkat/golongan **tetap IX** |
+| 9 | Akun petugas | **Username TIDAK boleh sama dengan NIP** (anti-bentrok dengan akun ASN). Daftar resmi: 99 akun (1 TTE, 6 Dinas, 19 Korwil, 73 SMP/SKB) dengan pola `admin.tte`, `admin.disdikN`, `kwc_*`, `smpn*_*` — disimpan di `local/akun-admin/` (tidak di-commit, berisi password) |
 
 ## 9. Lampiran: Referensi Domain (dari sistem live)
 

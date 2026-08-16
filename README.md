@@ -18,7 +18,7 @@ PRD  >  DATABASE ERD  >  API DOCUMENTATION  >  UI/UX  >  ARCHITECTURE  >  TECH S
 
 | Fase | Artefak | Status |
 |------|---------|--------|
-| 1. PRD | `docs/01-PRD/` | ✅ v1.4 FINAL (2026-08-16) |
+| 1. PRD | `docs/01-PRD/` | ✅ v1.5 FINAL (2026-08-16) |
 | 2. DATABASE ERD | `docs/02-DATABASE-ERD/` | ✅ v1.0 FINAL (2026-08-16) |
 | 3. API DOCUMENTATION | `docs/03-API-DOCUMENTATION/` | ✅ v1.1 FINAL (2026-08-16) |
 | 4. UI/UX | `docs/04-UIUX/` | ✅ v1.0 FINAL (2026-08-16) |

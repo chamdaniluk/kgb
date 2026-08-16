@@ -103,3 +103,7 @@ temp/
 cms-sekolahku-v3.1.1/
 reference/
 legacy/
+
+# ---------- Data lokal (JANGAN di-commit) ----------
+# Daftar akun petugas berisi password polos; hanya hidup di local/.
+local/
