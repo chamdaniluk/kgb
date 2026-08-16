@@ -1,6 +1,6 @@
-# API DOCUMENTATION — SI CENDIKIA v0.1 (DRAF)
+# API DOCUMENTATION — SI CENDIKIA v1.0 (FINAL)
 
-> Fase 3 dari 6. Sumber: PRD v1.3 + ERD v1.0 FINAL. Menunggu review owner.
+> Fase 3 dari 6 — **FINAL, disetujui owner 2026-08-16**. Sumber: PRD v1.3 + ERD v1.0 FINAL.
 > Konvensi teknis final (framework, bentuk token, dsb.) diputuskan di fase TECH STACK; dokumen ini mendefinisikan **kontrak** yang harus dipenuhi implementasi apa pun.
 
 ## 1. Konvensi Umum
