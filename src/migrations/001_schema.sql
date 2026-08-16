@@ -6,7 +6,7 @@ CREATE TABLE units (
     id         int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     code       text NOT NULL UNIQUE,
     name       text NOT NULL,
-    type       text NOT NULL CHECK (type IN ('korwil', 'smp', 'skb')),
+    type       text NOT NULL CHECK (type IN ('korwil', 'sd', 'tk', 'smp', 'skb', 'dinas')),
     parent_id  int REFERENCES units(id),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()

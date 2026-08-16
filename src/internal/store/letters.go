@@ -120,7 +120,11 @@ func CommitIssue(ctx context.Context, pool *pgxpool.Pool, issue IssueContext, si
 	if tag.RowsAffected() != 1 {
 		return ErrConflict
 	}
-	if err := UpdateTeacherAfterIssue(ctx, tx, issue.Submission.TeacherID, issue.Submission.ProposedTMT); err != nil {
+	masaKerja := issue.Submission.MasaKerjaTahun
+	if issue.Submission.ProposedMasaKerjaTahun != nil {
+		masaKerja = *issue.Submission.ProposedMasaKerjaTahun
+	}
+	if err := UpdateTeacherAfterIssue(ctx, tx, issue.Submission.TeacherID, issue.Submission.ProposedTMT, masaKerja); err != nil {
 		return err
 	}
 	details, err := json.Marshal(map[string]string{"number": issue.Number, "tte_receipt_id": receiptID})

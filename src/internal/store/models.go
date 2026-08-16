@@ -15,27 +15,29 @@ type LetterSummary struct {
 
 // Submission adalah pengajuan KGB beserta snapshot data guru.
 type Submission struct {
-	ID             int64          `json:"id"`
-	TeacherID      int64          `json:"teacher_id"`
-	Status         string         `json:"status"`
-	ProposedTMT    time.Time      `json:"proposed_tmt"`
-	CurrentSalary  string         `json:"current_salary"`
-	NextSalary     string         `json:"next_salary"`
-	FileName       string         `json:"file_name,omitempty"`
-	FilePath       string         `json:"-"`
-	FileSize       int            `json:"file_size"`
-	RejectionNote  string         `json:"rejection_note,omitempty"`
-	SubmittedAt    *time.Time     `json:"submitted_at,omitempty"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
-	TeacherName    string         `json:"teacher_name"`
-	NIP            string         `json:"nip"`
-	ASNType        string         `json:"asn_type"`
-	PangkatGol     string         `json:"pangkat_gol"`
-	MasaKerjaTahun int            `json:"masa_kerja_tahun"`
-	UnitID         int64          `json:"unit_id"`
-	UnitName       string         `json:"unit_name"`
-	Letter         *LetterSummary `json:"letter,omitempty"`
+	ID                     int64          `json:"id"`
+	TeacherID              int64          `json:"teacher_id"`
+	Status                 string         `json:"status"`
+	ProposedTMT            time.Time      `json:"proposed_tmt"`
+	ProposedMasaKerjaTahun *int           `json:"proposed_masa_kerja_tahun,omitempty"`
+	ProposedTMTKGBLast     *time.Time     `json:"proposed_tmt_kgb_last,omitempty"`
+	CurrentSalary          string         `json:"current_salary"`
+	NextSalary             string         `json:"next_salary"`
+	FileName               string         `json:"file_name,omitempty"`
+	FilePath               string         `json:"-"`
+	FileSize               int            `json:"file_size"`
+	RejectionNote          string         `json:"rejection_note,omitempty"`
+	SubmittedAt            *time.Time     `json:"submitted_at,omitempty"`
+	CreatedAt              time.Time      `json:"created_at"`
+	UpdatedAt              time.Time      `json:"updated_at"`
+	TeacherName            string         `json:"teacher_name"`
+	NIP                    string         `json:"nip"`
+	ASNType                string         `json:"asn_type"`
+	PangkatGol             string         `json:"pangkat_gol"`
+	MasaKerjaTahun         int            `json:"masa_kerja_tahun"`
+	UnitID                 int64          `json:"unit_id"`
+	UnitName               string         `json:"unit_name"`
+	Letter                 *LetterSummary `json:"letter,omitempty"`
 }
 
 // AuditLog adalah satu entri jejak audit append-only.
@@ -116,15 +118,18 @@ type UnitCount struct {
 
 // ImportedTeacher adalah baris master ASN setelah dinormalisasi dari file BKN.
 type ImportedTeacher struct {
-	NIP            string
-	Name           string
-	ASNType        string
-	UnitCode       string
-	UnitName       string
-	UnitType       string
-	PangkatGol     string
-	MasaKerjaTahun int
-	TMTKGBLast     *time.Time
+	NIP             string
+	Name            string
+	ASNType         string
+	UnitCode        string
+	UnitName        string
+	UnitType        string
+	ParentUnitCode  string
+	ParentUnitName  string
+	PangkatGol      string
+	MasaKerjaTahun  int
+	MasaKerjaSource string
+	TMTKGBLast      *time.Time
 }
 
 // Staff role constants are the normalized roles used by the SI CENDIKIA account importer.

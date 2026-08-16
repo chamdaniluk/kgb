@@ -68,8 +68,8 @@ func TestMigrateMembuat9Tabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate gagal: %v", err)
 	}
-	if n != 3 {
-		t.Errorf("berkas migrasi terapkan = %d, ingin 3", n)
+	if n != 4 {
+		t.Errorf("berkas migrasi terapkan = %d, ingin 4", n)
 	}
 	for _, tbl := range append([]string{"schema_migrations"}, semuaTabel...) {
 		var ada bool

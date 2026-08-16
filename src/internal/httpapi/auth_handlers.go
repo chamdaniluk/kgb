@@ -142,20 +142,26 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "TEACHER_NOT_FOUND", "Data kepegawaian tidak ditemukan.")
 			return
 		}
+		me := map[string]any{
+			"nip": t.NIP, "asn_type": t.ASNType, "unit": t.UnitName,
+			"pangkat_gol": t.PangkatGol, "masa_kerja_tahun": t.MasaKerjaTahun,
+			"masa_kerja_source": t.MasaKerjaSource,
+		}
 		gol := t.PangkatGol
 		if t.ASNType == "pppk" {
 			gol = "IX" // guru PPPK selalu IX (ERD §7a)
 		}
-		cur, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, t.MasaKerjaTahun)
-		if err != nil {
-			writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND",
-				"Kombinasi golongan/masa kerja tidak ada di skala gaji. Hubungi Dinas.")
-			return
-		}
-		me := map[string]any{
-			"nip": t.NIP, "asn_type": t.ASNType, "unit": t.UnitName,
-			"pangkat_gol": t.PangkatGol, "masa_kerja_tahun": t.MasaKerjaTahun,
-			"gaji_sekarang": cur, "gaji_berikutnya": next,
+		if t.MasaKerjaSource != "belum_tersedia" {
+			cur, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, t.MasaKerjaTahun)
+			if err != nil {
+				writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND",
+					"Kombinasi golongan/masa kerja tidak ada di skala gaji. Hubungi Dinas.")
+				return
+			}
+			me["gaji_sekarang"] = cur
+			me["gaji_berikutnya"] = next
+		} else {
+			me["data_perlu_dilengkapi"] = true
 		}
 		if t.TMTKGBLast != nil {
 			me["tmt_kgb_last"] = t.TMTKGBLast.Format("2006-01-02")

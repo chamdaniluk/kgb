@@ -14,6 +14,7 @@ import (
 
 const submissionSelect = `
 SELECT s.id, s.teacher_id, s.status, s.proposed_tmt,
+       s.proposed_masa_kerja_tahun, s.proposed_tmt_kgb_last,
        COALESCE(s.current_salary::text, ''), COALESCE(s.next_salary::text, ''),
        COALESCE(s.file_name, ''), COALESCE(s.file_path, ''), COALESCE(s.file_size, 0),
        COALESCE(s.rejection_note, ''), s.submitted_at, s.created_at, s.updated_at,
@@ -33,6 +34,7 @@ func scanSubmission(row pgx.Row) (Submission, error) {
 	var receipt *string
 	err := row.Scan(
 		&s.ID, &s.TeacherID, &s.Status, &s.ProposedTMT,
+		&s.ProposedMasaKerjaTahun, &s.ProposedTMTKGBLast,
 		&s.CurrentSalary, &s.NextSalary, &s.FileName, &s.FilePath, &s.FileSize,
 		&s.RejectionNote, &s.SubmittedAt, &s.CreatedAt, &s.UpdatedAt,
 		&s.TeacherName, &s.NIP, &s.ASNType, &s.PangkatGol, &s.MasaKerjaTahun,
@@ -118,7 +120,7 @@ func ListQueue(ctx context.Context, pool *pgxpool.Pool, role string, unitID *int
 }
 
 // CreateSubmission menyimpan pengajuan dan audit submit dalam satu transaksi.
-func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorID int64, proposedTMT time.Time, currentSalary, nextSalary, fileName, filePath string, fileSize int64, ip string) (Submission, error) {
+func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorID int64, proposedTMT time.Time, proposedMasaKerja *int, proposedTMTKGBLast *time.Time, currentSalary, nextSalary, fileName, filePath string, fileSize int64, ip string) (Submission, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return Submission{}, err
@@ -126,9 +128,9 @@ func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorI
 	defer tx.Rollback(ctx)
 	var id int64
 	err = tx.QueryRow(ctx, `
-		INSERT INTO submissions (teacher_id, status, proposed_tmt, current_salary, next_salary, file_name, file_path, file_size, submitted_at)
-		VALUES ($1, 'menunggu_unit', $2, $3, $4, $5, $6, $7, now()) RETURNING id`,
-		teacherID, proposedTMT, currentSalary, nextSalary, fileName, filePath, fileSize).Scan(&id)
+		INSERT INTO submissions (teacher_id, status, proposed_tmt, proposed_masa_kerja_tahun, proposed_tmt_kgb_last, current_salary, next_salary, file_name, file_path, file_size, submitted_at)
+		VALUES ($1, 'menunggu_unit', $2, $3, $4, $5, $6, $7, $8, $9, now()) RETURNING id`,
+		teacherID, proposedTMT, proposedMasaKerja, proposedTMTKGBLast, currentSalary, nextSalary, fileName, filePath, fileSize).Scan(&id)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -147,7 +149,7 @@ func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorI
 }
 
 // Resubmit mengubah pengajuan dikembalikan sesuai jenjang penolakan.
-func Resubmit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, proposedTMT time.Time, currentSalary, nextSalary, fileName, filePath string, fileSize int64, ip string) (Submission, error) {
+func Resubmit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, proposedTMT time.Time, proposedMasaKerja *int, proposedTMTKGBLast *time.Time, currentSalary, nextSalary, fileName, filePath string, fileSize int64, ip string) (Submission, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return Submission{}, err
@@ -169,7 +171,7 @@ func Resubmit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, propos
 	default:
 		return Submission{}, ErrConflict
 	}
-	if _, err := tx.Exec(ctx, `UPDATE submissions SET status=$1, proposed_tmt=$2, current_salary=$3, next_salary=$4, file_name=$5, file_path=$6, file_size=$7, rejection_note=NULL, submitted_at=now(), updated_at=now() WHERE id=$8`, newStatus, proposedTMT, currentSalary, nextSalary, fileName, filePath, fileSize, id); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE submissions SET status=$1, proposed_tmt=$2, proposed_masa_kerja_tahun=$3, proposed_tmt_kgb_last=$4, current_salary=$5, next_salary=$6, file_name=$7, file_path=$8, file_size=$9, rejection_note=NULL, submitted_at=now(), updated_at=now() WHERE id=$10`, newStatus, proposedTMT, proposedMasaKerja, proposedTMTKGBLast, currentSalary, nextSalary, fileName, filePath, fileSize, id); err != nil {
 		return Submission{}, err
 	}
 	details, _ := json.Marshal(map[string]any{"from": oldStatus, "to": newStatus, "file_name": fileName, "file_size": fileSize})

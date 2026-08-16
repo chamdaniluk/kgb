@@ -101,7 +101,7 @@ func cell(row []string, index int) string {
 
 func parseDateCell(v string) (*time.Time, error) {
 	v = strings.TrimSpace(v)
-	if v == "" {
+	if v == "" || strings.Contains(v, "0001") {
 		return nil, nil
 	}
 	for _, layout := range []string{"2006-01-02", "02/01/2006", "02-01-2006", "2006/01/02"} {
@@ -112,6 +112,126 @@ func parseDateCell(v string) (*time.Time, error) {
 	return nil, fmt.Errorf("tanggal %q tidak valid", v)
 }
 
+// deriveMasaKerja menerapkan aturan bisnis sumber BKN.
+// PNS hanya memakai TMT CPNS; PPPK memakai TMT CPNS dan fallback ke TMT GOL.
+func deriveMasaKerja(asnType string, tmtCPNS, tmtGol *time.Time, asOf time.Time) (int, string) {
+	candidate := tmtCPNS
+	source := "tmt_cpns"
+	if asnType == "pppk" && candidate == nil {
+		candidate = tmtGol
+		source = "tmt_gol"
+	}
+	if candidate == nil {
+		return 0, "belum_tersedia"
+	}
+	if candidate.After(asOf) {
+		return 0, "belum_tersedia"
+	}
+	years := asOf.Year() - candidate.Year()
+	anniversary := candidate.AddDate(years, 0, 0)
+	if anniversary.After(asOf) {
+		years--
+	}
+	if years < 0 {
+		years = 0
+	}
+	return years, source
+}
+
+type parsedBKNUnit struct {
+	UnitCode       string
+	UnitName       string
+	UnitType       string
+	ParentUnitCode string
+	ParentUnitName string
+}
+
+var bknDistrictPattern = regexp.MustCompile(`(?i)KECAMATAN\s+([A-Z]+)`)
+
+var bknDistricts = map[string]bool{
+	"BRATI": true, "GABUS": true, "GEYER": true, "GODONG": true,
+	"GROBOGAN": true, "GUBUG": true, "KARANGRAYUNG": true,
+	"KEDUNGJATI": true, "KLAMBU": true, "KRADENAN": true,
+	"NGARINGAN": true, "PENAWANGAN": true, "PULOKULON": true,
+	"PURWODADI": true, "TANGGUNGHARJO": true, "TAWANGHARJO": true,
+	"TEGOWANU": true, "TOROH": true, "WIROSARI": true,
+}
+
+func canonicalBKNUnitName(name string) string {
+	name = canonicalInstitutionName(name)
+	name = strings.TrimSpace(name)
+	name = strings.Replace(name, "SMPN ", "SMP NEGERI ", 1)
+	name = strings.Replace(name, " KELOMPOK SEKOLAH MENENGAH PERTAMA NEGERI", "", 1)
+	return strings.Join(strings.Fields(name), " ")
+}
+
+func bknDistrictFromInstitution(raw string) string {
+	upper := strings.ToUpper(raw)
+	matches := bknDistrictPattern.FindAllStringSubmatch(upper, -1)
+	for i := len(matches) - 1; i >= 0; i-- {
+		if len(matches[i]) > 1 && bknDistricts[matches[i][1]] {
+			return matches[i][1]
+		}
+	}
+	for district := range bknDistricts {
+		if strings.Contains(upper, district) {
+			return district
+		}
+	}
+	return ""
+}
+
+func bknDistrictFromSchoolName(school string) string {
+	upper := strings.ToUpper(strings.TrimSpace(school))
+	for district := range bknDistricts {
+		if strings.HasSuffix(upper, " "+district) || strings.Contains(upper, " "+district+" ") {
+			return district
+		}
+	}
+	return ""
+}
+
+func parseBKNUnit(raw string) (parsedBKNUnit, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return parsedBKNUnit{}, errors.New("instansi sub unit kosong")
+	}
+	if normalizeHeader(raw) == "dinas pendidikan" {
+		return parsedBKNUnit{UnitCode: "DINAS-PENDIDIKAN", UnitName: "DINAS PENDIDIKAN", UnitType: "dinas"}, nil
+	}
+	parts := strings.SplitN(canonicalInstitutionName(raw), " - ", 2)
+	school := canonicalBKNUnitName(parts[0])
+	upper := strings.ToUpper(school)
+	unitType := ""
+	switch {
+	case strings.HasPrefix(upper, "SDN ") || strings.HasPrefix(upper, "SD "):
+		unitType = "sd"
+	case strings.HasPrefix(upper, "TK "):
+		unitType = "tk"
+	case strings.HasPrefix(upper, "SMPN ") || strings.HasPrefix(upper, "SMP NEGERI ") || strings.HasPrefix(upper, "SMP "):
+		unitType = "smp"
+	case strings.Contains(upper, "SKB") || strings.HasPrefix(upper, "SPNF "):
+		unitType = "skb"
+	default:
+		return parsedBKNUnit{}, fmt.Errorf("format unit BKN tidak dikenali: %q", school)
+	}
+	district := bknDistrictFromInstitution(raw)
+	if district == "" {
+		district = bknDistrictFromSchoolName(school)
+	}
+	if district == "" {
+		return parsedBKNUnit{}, fmt.Errorf("kecamatan unit BKN tidak dapat dipetakan: %q", school)
+	}
+	parentName := "KORWILCAM " + district
+	return parsedBKNUnit{
+		UnitCode:       institutionCode(school),
+		UnitName:       school,
+		UnitType:       unitType,
+		ParentUnitCode: institutionCode(parentName),
+		ParentUnitName: parentName,
+	}, nil
+}
+
 func parseImportTeachers(rows [][]string) ([]store.ImportedTeacher, error) {
 	if len(rows) < 2 {
 		return nil, errors.New("file impor tidak memiliki data")
@@ -119,24 +239,22 @@ func parseImportTeachers(rows [][]string) ([]store.ImportedTeacher, error) {
 	h := rows[0]
 	idxNIP := headerIndex(h, "NIP", "NIP Baru", "Nomor Induk Pegawai")
 	idxName := headerIndex(h, "Nama", "Nama ASN", "Nama Pegawai")
-	idxASN := headerIndex(h, "Jenis ASN", "Status ASN", "ASN Type", "Status Kepegawaian")
+	idxASN := headerIndex(h, "Jenis ASN", "Status ASN", "ASN Type", "Status Kepegawaian", "Status Pegawai")
 	idxUnitCode := headerIndex(h, "Kode Unit", "Kode Sekolah", "Kode")
-	idxUnit := headerIndex(h, "Unit", "Unit Kerja", "Nama Unit", "Sekolah")
-	idxUnitType := headerIndex(h, "Jenis Unit", "Tipe Unit", "Type")
-	idxGol := headerIndex(h, "Pangkat Golongan", "Pangkat/Gol", "Golongan", "Pangkat")
+	idxUnit := headerIndex(h, "Unit", "Unit Kerja", "Nama Unit", "Sekolah", "Instansi Sub Unit")
+	idxGol := headerIndex(h, "Pangkat Golongan", "Pangkat/Gol", "Golongan", "Pangkat", "Gol.")
 	idxMKG := headerIndex(h, "Masa Kerja Tahun", "Masa Kerja", "MKG")
-	idxTMT := headerIndex(h, "TMT KGB Terakhir", "TMT KGB", "TMT")
-	if idxNIP < 0 || idxName < 0 || idxASN < 0 || idxUnit < 0 || idxGol < 0 || idxMKG < 0 {
-		return nil, errors.New("kolom wajib BKN: NIP, nama, jenis ASN, unit, pangkat/golongan, masa kerja")
+	idxTMT := headerIndex(h, "TMT KGB Terakhir", "TMT KGB")
+	idxTMTCPNS := headerIndex(h, "TMT CPNS")
+	idxTMTGOL := headerIndex(h, "TMT GOL", "TMT Golongan")
+	if idxNIP < 0 || idxName < 0 || idxASN < 0 || idxUnit < 0 || idxGol < 0 || (idxMKG < 0 && idxTMTCPNS < 0 && idxTMTGOL < 0) {
+		return nil, errors.New("kolom wajib BKN: NIP, nama, status pegawai, instansi sub unit, golongan/pangkat, atau TMT CPNS/TMT GOL")
 	}
 	result := make([]store.ImportedTeacher, 0, len(rows)-1)
+	asOf := time.Now()
 	for _, row := range rows[1:] {
 		if strings.TrimSpace(cell(row, idxNIP)) == "" {
 			continue
-		}
-		mkg, err := strconv.Atoi(strings.TrimSpace(cell(row, idxMKG)))
-		if err != nil {
-			mkg = -1
 		}
 		asn := strings.ToLower(cell(row, idxASN))
 		if strings.Contains(asn, "pppk") || strings.Contains(asn, "p3k") {
@@ -144,22 +262,44 @@ func parseImportTeachers(rows [][]string) ([]store.ImportedTeacher, error) {
 		} else if strings.Contains(asn, "pns") {
 			asn = "pns"
 		}
-		unitCode := cell(row, idxUnitCode)
-		if unitCode == "" {
-			unitCode = cell(row, idxUnit)
-		}
-		unitType := strings.ToLower(cell(row, idxUnitType))
-		if unitType == "" {
-			unitType = "smp"
-		}
-		if !strings.Contains("korwil smp skb", unitType) {
-			unitType = "smp"
-		}
-		tmt, err := parseDateCell(cell(row, idxTMT))
+		unitName := cell(row, idxUnit)
+		parsedUnit, err := parseBKNUnit(unitName)
 		if err != nil {
-			tmt = nil
+			return nil, err
 		}
-		result = append(result, store.ImportedTeacher{NIP: cell(row, idxNIP), Name: cell(row, idxName), ASNType: asn, UnitCode: unitCode, UnitName: cell(row, idxUnit), UnitType: unitType, PangkatGol: cell(row, idxGol), MasaKerjaTahun: mkg, TMTKGBLast: tmt})
+		if idxUnitCode >= 0 && cell(row, idxUnitCode) != "" {
+			parsedUnit.UnitCode = cell(row, idxUnitCode)
+		}
+		var tmtCPNS, tmtGOL, tmtKGB *time.Time
+		if idxTMTCPNS >= 0 {
+			tmtCPNS, err = parseDateCell(cell(row, idxTMTCPNS))
+			if err != nil {
+				return nil, err
+			}
+		}
+		if idxTMTGOL >= 0 {
+			tmtGOL, err = parseDateCell(cell(row, idxTMTGOL))
+			if err != nil {
+				return nil, err
+			}
+		}
+		if idxTMT >= 0 {
+			tmtKGB, err = parseDateCell(cell(row, idxTMT))
+			if err != nil {
+				return nil, err
+			}
+		}
+		mkg, source := 0, "belum_tersedia"
+		if idxMKG >= 0 && strings.TrimSpace(cell(row, idxMKG)) != "" {
+			mkg, err = strconv.Atoi(strings.TrimSpace(cell(row, idxMKG)))
+			if err != nil || mkg < 0 {
+				return nil, fmt.Errorf("masa kerja BKN tidak valid untuk NIP %s", cell(row, idxNIP))
+			}
+			source = "masa_kerja_bkn"
+		} else {
+			mkg, source = deriveMasaKerja(asn, tmtCPNS, tmtGOL, asOf)
+		}
+		result = append(result, store.ImportedTeacher{NIP: cell(row, idxNIP), Name: cell(row, idxName), ASNType: asn, UnitCode: parsedUnit.UnitCode, UnitName: parsedUnit.UnitName, UnitType: parsedUnit.UnitType, ParentUnitCode: parsedUnit.ParentUnitCode, ParentUnitName: parsedUnit.ParentUnitName, PangkatGol: cell(row, idxGol), MasaKerjaTahun: mkg, MasaKerjaSource: source, TMTKGBLast: tmtKGB})
 	}
 	return result, nil
 }
@@ -327,8 +467,8 @@ func (s *Server) handleAdminCreateUnit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "VALIDATION_ERROR", "Kode, nama, dan tipe unit wajib diisi.")
 		return
 	}
-	if req.Type != "korwil" && req.Type != "smp" && req.Type != "skb" {
-		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "Tipe unit harus korwil, smp, atau skb.")
+	if req.Type != "korwil" && req.Type != "sd" && req.Type != "tk" && req.Type != "smp" && req.Type != "skb" && req.Type != "dinas" {
+		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "Tipe unit harus korwil, sd, tk, smp, skb, atau dinas.")
 		return
 	}
 	item, err := store.CreateUnit(r.Context(), s.Pool, req.Code, req.Name, req.Type)

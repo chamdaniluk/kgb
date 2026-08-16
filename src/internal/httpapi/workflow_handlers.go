@@ -57,6 +57,54 @@ func (s *Server) teacherForUser(r *http.Request) (store.Teacher, bool) {
 	return t, true
 }
 
+// resolveKGBInputs memilih data master atau koreksi yang diisi saat pengajuan.
+// Masa kerja harus tersedia untuk menghitung skala gaji; TMT KGB terakhir
+// boleh kosong pada seeding awal dan hanya dipakai bila diisi.
+func resolveKGBInputs(teacher store.Teacher, proposedMasaKerja *int, proposedTMTKGBLast *time.Time, proposedTMT time.Time) (int, *time.Time, error) {
+	masaKerja := teacher.MasaKerjaTahun
+	if proposedMasaKerja != nil {
+		masaKerja = *proposedMasaKerja
+	}
+	if masaKerja < 0 {
+		return 0, nil, errors.New("masa kerja tidak boleh negatif")
+	}
+	if proposedMasaKerja == nil && teacher.MasaKerjaSource == "belum_tersedia" {
+		return 0, nil, errors.New("masa kerja wajib dilengkapi pada pengajuan")
+	}
+	last := teacher.TMTKGBLast
+	if proposedTMTKGBLast != nil {
+		last = proposedTMTKGBLast
+	}
+	if last != nil && last.After(proposedTMT) {
+		return 0, nil, errors.New("TMT KGB terakhir tidak boleh setelah TMT usulan")
+	}
+	return masaKerja, last, nil
+}
+
+func parseOptionalFormInt(raw string) (*int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil, errors.New("masa kerja harus berupa angka")
+	}
+	return &value, nil
+}
+
+func parseOptionalFormDate(raw string) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	value, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		return nil, errors.New("TMT KGB terakhir tidak valid")
+	}
+	return &value, nil
+}
+
 func (s *Server) canAccessSubmission(r *http.Request, sub store.Submission) bool {
 	u := userFrom(r)
 	switch u.Role {
@@ -137,7 +185,22 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "Tanggal TMT tidak valid.")
 		return
 	}
-	if t.TMTKGBLast != nil && proposedTMT.Before(t.TMTKGBLast.AddDate(2, 0, 0)) {
+	proposedMasaKerja, err := parseOptionalFormInt(r.FormValue("masa_kerja_tahun"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	proposedTMTKGBLast, err := parseOptionalFormDate(r.FormValue("tmt_kgb_last"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	masaKerja, tmtKGBLast, err := resolveKGBInputs(t, proposedMasaKerja, proposedTMTKGBLast, proposedTMT)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "KGB_DATA_REQUIRED", err.Error())
+		return
+	}
+	if tmtKGBLast != nil && proposedTMT.Before(tmtKGBLast.AddDate(2, 0, 0)) {
 		writeErr(w, http.StatusUnprocessableEntity, "NOT_YET_ELIGIBLE", "Pengajuan belum mencapai dua tahun dari TMT KGB terakhir.")
 		return
 	}
@@ -145,7 +208,7 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 	if t.ASNType == "pppk" {
 		gol = "IX"
 	}
-	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, t.MasaKerjaTahun)
+	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, masaKerja)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND", "Kombinasi golongan/masa kerja tidak ada di skala gaji.")
 		return
@@ -177,7 +240,8 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusInternalServerError, "FILE_SAVE_FAILED", "Berkas gagal disimpan.")
 		return
 	}
-	sub, err := store.CreateSubmission(r.Context(), s.Pool, t.ID, userFrom(r).ID, proposedTMT, current, next, files.OriginalName(header.Filename), path, size, clientIP(r))
+	effectiveMasaKerja := masaKerja
+	sub, err := store.CreateSubmission(r.Context(), s.Pool, t.ID, userFrom(r).ID, proposedTMT, &effectiveMasaKerja, tmtKGBLast, current, next, files.OriginalName(header.Filename), path, size, clientIP(r))
 	if err != nil {
 		_ = s.Files.Remove(path)
 		if mapStoreError(w, err) {
@@ -212,7 +276,22 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "Tanggal TMT tidak valid.")
 		return
 	}
-	if t.TMTKGBLast != nil && proposedTMT.Before(t.TMTKGBLast.AddDate(2, 0, 0)) {
+	proposedMasaKerja, err := parseOptionalFormInt(r.FormValue("masa_kerja_tahun"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	proposedTMTKGBLast, err := parseOptionalFormDate(r.FormValue("tmt_kgb_last"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	masaKerja, tmtKGBLast, err := resolveKGBInputs(t, proposedMasaKerja, proposedTMTKGBLast, proposedTMT)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "KGB_DATA_REQUIRED", err.Error())
+		return
+	}
+	if tmtKGBLast != nil && proposedTMT.Before(tmtKGBLast.AddDate(2, 0, 0)) {
 		writeErr(w, http.StatusUnprocessableEntity, "NOT_YET_ELIGIBLE", "Pengajuan belum mencapai dua tahun dari TMT KGB terakhir.")
 		return
 	}
@@ -220,7 +299,7 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 	if t.ASNType == "pppk" {
 		gol = "IX"
 	}
-	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, t.MasaKerjaTahun)
+	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, masaKerja)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND", "Skala gaji belum tersedia.")
 		return
@@ -240,7 +319,8 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, "FILE_INVALID", "Berkas harus PDF dan maksimal 5MB.")
 		return
 	}
-	sub, err := store.Resubmit(r.Context(), s.Pool, id, userFrom(r).ID, proposedTMT, current, next, filepath.Base(header.Filename), path, size, clientIP(r))
+	effectiveMasaKerja := masaKerja
+	sub, err := store.Resubmit(r.Context(), s.Pool, id, userFrom(r).ID, proposedTMT, &effectiveMasaKerja, tmtKGBLast, current, next, filepath.Base(header.Filename), path, size, clientIP(r))
 	if err != nil {
 		_ = s.Files.Remove(path)
 		if mapStoreError(w, err) {
