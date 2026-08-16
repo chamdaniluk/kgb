@@ -71,6 +71,12 @@ func (m *SessionManager) Verify(token string) (userID int64, csrf string, ok boo
 		return 0, "", false
 	}
 	m.mu.Lock()
+	now := time.Now()
+	for activeNonce, activeExpiry := range m.active {
+		if !activeExpiry.After(now) {
+			delete(m.active, activeNonce)
+		}
+	}
 	expActive, ada := m.active[nonce]
 	m.mu.Unlock()
 	if !ada || time.Unix(exp, 0) != expActive {

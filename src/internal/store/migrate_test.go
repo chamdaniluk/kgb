@@ -26,7 +26,21 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Skipf("database uji tidak tersedia: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	lockConn, err := pool.Acquire(ctx)
+	if err != nil {
+		pool.Close()
+		t.Skipf("koneksi lock database uji tidak tersedia: %v", err)
+	}
+	if _, err := lockConn.Exec(ctx, `SELECT pg_advisory_lock(hashtext('si-cendikia-test-suite'))`); err != nil {
+		lockConn.Release()
+		pool.Close()
+		t.Skipf("lock database uji tidak tersedia: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = lockConn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext('si-cendikia-test-suite'))`)
+		lockConn.Release()
+		pool.Close()
+	})
 	return pool
 }
 
@@ -54,8 +68,8 @@ func TestMigrateMembuat9Tabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate gagal: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("berkas migrasi terapkan = %d, ingin 1", n)
+	if n != 2 {
+		t.Errorf("berkas migrasi terapkan = %d, ingin 2", n)
 	}
 	for _, tbl := range append([]string{"schema_migrations"}, semuaTabel...) {
 		var ada bool

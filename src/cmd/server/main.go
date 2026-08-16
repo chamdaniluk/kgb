@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
+	"sicendikia/internal/auth"
+	"sicendikia/internal/esign"
+	"sicendikia/internal/files"
 	"sicendikia/internal/httpapi"
+	"sicendikia/internal/pdf"
 	"sicendikia/internal/store"
 )
 
@@ -19,37 +24,68 @@ func envOr(key, fallback string) string {
 }
 
 func main() {
+	logger := slog.Default()
 	addr := envOr("ADDR", ":8080")
-	// Dev lokal: unix socket + peer auth (tanpa password). Produksi: set DATABASE_URL penuh.
 	dbURL := envOr("DATABASE_URL", "dbname=si_cendikia sslmode=disable")
 	migrationsDir := envOr("MIGRATIONS_DIR", "migrations")
-
-	ctx := context.Background()
+	fileRoot := envOr("FILE_ROOT", "/var/lib/si-cendikia/files")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	pool, err := store.Open(ctx, dbURL)
 	if err != nil {
-		log.Fatalf("koneksi database gagal: %v", err)
+		logger.Error("koneksi database gagal", "err", err)
+		os.Exit(1)
 	}
 	defer pool.Close()
-
-	n, err := store.Migrate(ctx, pool, migrationsDir)
+	if n, err := store.Migrate(ctx, pool, migrationsDir); err != nil {
+		logger.Error("migrasi gagal", "err", err)
+		os.Exit(1)
+	} else if n > 0 {
+		logger.Info("migrasi diterapkan", "count", n)
+	}
+	if err := os.MkdirAll(filepath.Dir(fileRoot), 0o750); err != nil {
+		logger.Error("folder file gagal disiapkan", "err", err)
+		os.Exit(1)
+	}
+	fileStore, err := files.New(fileRoot)
 	if err != nil {
-		log.Fatalf("migrasi gagal: %v", err)
+		logger.Error("storage file gagal disiapkan", "err", err)
+		os.Exit(1)
 	}
-	if n > 0 {
-		log.Printf("migrasi: %d berkas diterapkan", n)
+	secret := envOr("SESSION_SECRET", "")
+	if len(secret) < 32 {
+		logger.Error("SESSION_SECRET wajib diisi minimal 32 karakter")
+		os.Exit(1)
 	}
-
-	sessionSecret := envOr("SESSION_SECRET", "")
-	if sessionSecret == "" {
-		log.Fatal("SESSION_SECRET wajib diisi (set via environment, jangan pernah di-commit)")
+	bootstrapUsername := os.Getenv("BOOTSTRAP_ADMIN_USERNAME")
+	bootstrapPassword := os.Getenv("BOOTSTRAP_ADMIN_PASSWORD")
+	if bootstrapUsername != "" || bootstrapPassword != "" {
+		if bootstrapUsername == "" || bootstrapPassword == "" {
+			logger.Error("BOOTSTRAP_ADMIN_USERNAME dan BOOTSTRAP_ADMIN_PASSWORD harus diisi berpasangan")
+			os.Exit(1)
+		}
+		hash, err := auth.HashPassword(bootstrapPassword)
+		if err != nil {
+			logger.Error("password bootstrap gagal diproses", "err", err)
+			os.Exit(1)
+		}
+		if err := store.EnsureBootstrapAdmin(ctx, pool, bootstrapUsername, hash, os.Getenv("BOOTSTRAP_ADMIN_NAME")); err != nil {
+			logger.Error("bootstrap admin gagal", "err", err)
+			os.Exit(1)
+		}
+		logger.Info("bootstrap admin siap", "username", bootstrapUsername)
 	}
-	api := httpapi.New(pool, sessionSecret, envOr("SECURE_COOKIE", "true") == "true")
-
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           api.Routes(),
-		ReadHeaderTimeout: 5 * time.Second,
+	var signer *esign.Client
+	if baseURL := envOr("ESIGN_BASE_URL", ""); baseURL != "" {
+		signer = &esign.Client{BaseURL: baseURL, Username: os.Getenv("ESIGN_USERNAME"), Password: os.Getenv("ESIGN_PASSWORD")}
 	}
-	log.Printf("si-cendikia mendengarkan di %s", addr)
-	log.Fatal(srv.ListenAndServe())
+	api := httpapi.NewWithDependencies(pool, secret, envOr("SECURE_COOKIE", "true") == "true", httpapi.Dependencies{
+		Files: fileStore, Renderer: pdf.NewRenderer(), Signer: signer,
+	})
+	srv := &http.Server{Addr: addr, Handler: api.Routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 120 * time.Second}
+	logger.Info("si-cendikia mendengarkan", "addr", addr)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		logger.Error("server berhenti", "err", err)
+		os.Exit(1)
+	}
 }

@@ -1,0 +1,22 @@
+[Unit]
+Description=SI CENDIKIA KGB ASN
+After=network-online.target postgresql@16-main.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/si-cendikia
+ExecStart=/opt/si-cendikia/si-cendikia-server
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/si-cendikia
+EnvironmentFile=/etc/si-cendikia/si-cendikia.env
+
+[Install]
+WantedBy=multi-user.target

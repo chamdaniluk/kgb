@@ -24,7 +24,8 @@ PRD  >  DATABASE ERD  >  API DOCUMENTATION  >  UI/UX  >  ARCHITECTURE  >  TECH S
 | 4. UI/UX | `docs/04-UIUX/` | ✅ v1.0 FINAL (2026-08-16) |
 | 5. ARCHITECTURE | `docs/05-ARCHITECTURE/` | ✅ v1.2 FINAL (2026-08-16) |
 | 6. TECH STACK | `docs/06-TECH-STACK/` | ✅ v1.0 FINAL (2026-08-16) |
-| 7. IMPLEMENTASI | `src/` | ⬜ dimulai setelah persetujuan owner |
+| 7. IMPLEMENTASI | `src/` | ✅ vertical slice + API inti + UI + E2E lokal |
+| 8. OPERASIONAL | `deploy/` | ✅ template systemd/Nginx + backup/restore drill; cutover live menunggu otorisasi |
 
 **Aturan keras:**
 - Satu fase hanya boleh dikerjakan kalau artefak fase sebelumnya sudah ada dan disetujui.

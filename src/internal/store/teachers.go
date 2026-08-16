@@ -2,36 +2,193 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Teacher: baris tabel teachers (+ nama unit via join).
 type Teacher struct {
-	ID             int64
-	UserID         *int64
-	NIP            string
-	Name           string
-	ASNType        string
-	UnitID         int64
-	UnitName       string
-	PangkatGol     string
-	MasaKerjaTahun int
-	TMTKGBLast     *time.Time
+	ID             int64      `json:"id"`
+	UserID         *int64     `json:"user_id,omitempty"`
+	NIP            string     `json:"nip"`
+	Name           string     `json:"name"`
+	ASNType        string     `json:"asn_type"`
+	UnitID         int64      `json:"unit_id"`
+	UnitName       string     `json:"unit_name"`
+	PangkatGol     string     `json:"pangkat_gol"`
+	MasaKerjaTahun int        `json:"masa_kerja_tahun"`
+	TMTKGBLast     *time.Time `json:"tmt_kgb_last,omitempty"`
 }
 
-func GetTeacherByUserID(ctx context.Context, pool *pgxpool.Pool, userID int64) (Teacher, error) {
+const teacherCols = `t.id, t.user_id, t.nip, t.name, t.asn_type,
+       t.unit_id, un.name, t.pangkat_gol, t.masa_kerja_tahun, t.tmt_kgb_last`
+
+func scanTeacher(row pgx.Row) (Teacher, error) {
 	var t Teacher
-	err := pool.QueryRow(ctx, `
-		SELECT t.id, t.user_id, t.nip, t.name, t.asn_type,
-		       t.unit_id, un.name, t.pangkat_gol, t.masa_kerja_tahun, t.tmt_kgb_last
-		FROM teachers t JOIN units un ON un.id = t.unit_id
-		WHERE t.user_id = $1`, userID,
-	).Scan(&t.ID, &t.UserID, &t.NIP, &t.Name, &t.ASNType,
+	err := row.Scan(&t.ID, &t.UserID, &t.NIP, &t.Name, &t.ASNType,
 		&t.UnitID, &t.UnitName, &t.PangkatGol, &t.MasaKerjaTahun, &t.TMTKGBLast)
-	if err != nil {
+	return t, err
+}
+
+// GetTeacherByUserID mengambil data kepegawaian dari akun ASN.
+func GetTeacherByUserID(ctx context.Context, pool *pgxpool.Pool, userID int64) (Teacher, error) {
+	t, err := scanTeacher(pool.QueryRow(ctx, `
+		SELECT `+teacherCols+`
+		FROM teachers t JOIN units un ON un.id = t.unit_id
+		WHERE t.user_id = $1`, userID))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return Teacher{}, ErrNotFound
 	}
-	return t, nil
+	return t, err
+}
+
+// GetTeacherByID mengambil satu guru.
+func GetTeacherByID(ctx context.Context, pool *pgxpool.Pool, id int64) (Teacher, error) {
+	t, err := scanTeacher(pool.QueryRow(ctx, `
+		SELECT `+teacherCols+`
+		FROM teachers t JOIN units un ON un.id = t.unit_id
+		WHERE t.id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Teacher{}, ErrNotFound
+	}
+	return t, err
+}
+
+// ListTeachers mengambil master ASN untuk admin.
+func ListTeachers(ctx context.Context, pool *pgxpool.Pool, q string, limit, offset int) ([]Teacher, int64, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	pattern := "%" + q + "%"
+	var total int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM teachers WHERE ($1='' OR nip ILIKE $2 OR name ILIKE $2)`, q, pattern).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := pool.Query(ctx, `
+		SELECT `+teacherCols+`
+		FROM teachers t JOIN units un ON un.id=t.unit_id
+		WHERE ($1='' OR t.nip ILIKE $2 OR t.name ILIKE $2)
+		ORDER BY t.name ASC LIMIT $3 OFFSET $4`, q, pattern, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	result := make([]Teacher, 0)
+	for rows.Next() {
+		t, err := scanTeacher(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		result = append(result, t)
+	}
+	return result, total, rows.Err()
+}
+
+// UpsertImportedTeacher membuat atau memperbarui unit, akun ASN, dan guru.
+func UpsertImportedTeacher(ctx context.Context, tx pgx.Tx, t ImportedTeacher, passwordHash string) (created bool, err error) {
+	var unitID int64
+	if err = tx.QueryRow(ctx, `
+		INSERT INTO units (code, name, type) VALUES ($1,$2,$3)
+		ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name, type=EXCLUDED.type, updated_at=now()
+		RETURNING id`, t.UnitCode, t.UnitName, t.UnitType).Scan(&unitID); err != nil {
+		return false, fmt.Errorf("upsert unit: %w", err)
+	}
+	var existingRole string
+	roleErr := tx.QueryRow(ctx, `SELECT role FROM users WHERE username=$1`, t.NIP).Scan(&existingRole)
+	if roleErr == nil && existingRole != "asn" {
+		return false, errors.New("NIP sudah dipakai akun petugas; username akun petugas tidak boleh sama dengan NIP")
+	}
+	if roleErr != nil && !errors.Is(roleErr, pgx.ErrNoRows) {
+		return false, fmt.Errorf("cek username ASN: %w", roleErr)
+	}
+	var userID int64
+	err = tx.QueryRow(ctx, `
+		INSERT INTO users (username,password_hash,role,name,unit_id,is_active)
+		VALUES ($1,$2,'asn',$3,$4,true)
+		ON CONFLICT (username) DO UPDATE SET name=EXCLUDED.name, unit_id=EXCLUDED.unit_id, is_active=true, updated_at=now()
+		RETURNING id`, t.NIP, passwordHash, t.Name, unitID).Scan(&userID)
+	if err != nil {
+		return false, fmt.Errorf("upsert user ASN: %w", err)
+	}
+	var existingID int64
+	err = tx.QueryRow(ctx, `SELECT id FROM teachers WHERE nip=$1`, t.NIP).Scan(&existingID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		_, err = tx.Exec(ctx, `INSERT INTO teachers (user_id,nip,name,asn_type,unit_id,pangkat_gol,masa_kerja_tahun,tmt_kgb_last) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, userID, t.NIP, t.Name, t.ASNType, unitID, t.PangkatGol, t.MasaKerjaTahun, t.TMTKGBLast)
+		return true, err
+	}
+	if err != nil {
+		return false, err
+	}
+	_, err = tx.Exec(ctx, `UPDATE teachers SET user_id=$1,name=$2,asn_type=$3,unit_id=$4,pangkat_gol=$5,masa_kerja_tahun=$6,tmt_kgb_last=$7,updated_at=now() WHERE id=$8`, userID, t.Name, t.ASNType, unitID, t.PangkatGol, t.MasaKerjaTahun, t.TMTKGBLast, existingID)
+	return false, err
+}
+
+// ValidateImportedTeacher memeriksa invariant master yang dapat dipercaya.
+func IsNIPUsername(username string) bool {
+	if len(username) != 18 {
+		return false
+	}
+	for _, r := range username {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func ValidateImportedTeacher(t ImportedTeacher) error {
+	if len(t.NIP) != 18 {
+		return fmt.Errorf("NIP %q harus 18 digit", t.NIP)
+	}
+	for _, r := range t.NIP {
+		if r < '0' || r > '9' {
+			return fmt.Errorf("NIP %q harus numerik", t.NIP)
+		}
+	}
+	if t.Name == "" || t.UnitCode == "" || t.UnitName == "" {
+		return errors.New("nama dan unit wajib diisi")
+	}
+	if t.ASNType != "pns" && t.ASNType != "pppk" {
+		return errors.New("jenis ASN harus pns atau pppk")
+	}
+	if t.MasaKerjaTahun < 0 {
+		return errors.New("masa kerja tidak boleh negatif")
+	}
+	if t.ASNType == "pppk" && t.PangkatGol != "IX" {
+		return errors.New("golongan PPPK guru harus IX")
+	}
+	return nil
+}
+
+// EnsureImportAudit menyimpan riwayat impor master.
+func EnsureImportAudit(ctx context.Context, pool *pgxpool.Pool, actorID int64, fileName string, result ImportResult) error {
+	notes := ""
+	for _, n := range result.Notes {
+		if notes != "" {
+			notes += "\n"
+		}
+		notes += n
+	}
+	_, err := pool.Exec(ctx, `INSERT INTO bkn_imports (file_name, imported_by, rows_total, rows_created, rows_updated, rows_skipped, notes) VALUES ($1,$2,$3,$4,$5,$6,$7)`, fileName, actorID, result.RowsTotal, result.RowsCreated, result.RowsUpdated, result.RowsSkipped, nullIfEmpty(notes))
+	return err
+}
+
+// UpdateTeacherAfterIssue menerapkan hasil KGB yang telah diterbitkan.
+func UpdateTeacherAfterIssue(ctx context.Context, tx pgx.Tx, teacherID int64, proposedTMT time.Time) error {
+	_, err := tx.Exec(ctx, `UPDATE teachers SET tmt_kgb_last=$1, masa_kerja_tahun=masa_kerja_tahun+2, updated_at=now() WHERE id=$2`, proposedTMT, teacherID)
+	return err
+}
+
+// IsUniqueViolation membantu handler memetakan konflik username/NIP.
+func IsUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

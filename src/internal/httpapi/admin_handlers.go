@@ -1,0 +1,427 @@
+package httpapi
+
+import (
+	"encoding/csv"
+	"errors"
+	"fmt"
+	"mime/multipart"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"sicendikia/internal/auth"
+	"sicendikia/internal/store"
+
+	"github.com/xuri/excelize/v2"
+)
+
+const maxImportSize int64 = 32 << 20
+
+func readTabularUpload(file multipart.File, filename string) ([][]string, error) {
+	if strings.HasSuffix(strings.ToLower(filename), ".csv") {
+		return csv.NewReader(file).ReadAll()
+	}
+	book, err := excelize.OpenReader(file)
+	if err != nil {
+		return nil, fmt.Errorf("baca Excel: %w", err)
+	}
+	defer book.Close()
+	sheets := book.GetSheetList()
+	if len(sheets) == 0 {
+		return nil, errors.New("sheet Excel kosong")
+	}
+	return book.GetRows(sheets[0])
+}
+
+func normalizeHeader(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func headerIndex(headers []string, names ...string) int {
+	wanted := make(map[string]bool, len(names))
+	for _, name := range names {
+		wanted[normalizeHeader(name)] = true
+	}
+	for i, header := range headers {
+		if wanted[normalizeHeader(header)] {
+			return i
+		}
+	}
+	return -1
+}
+
+func cell(row []string, index int) string {
+	if index < 0 || index >= len(row) {
+		return ""
+	}
+	return strings.TrimSpace(row[index])
+}
+
+func parseDateCell(v string) (*time.Time, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil, nil
+	}
+	for _, layout := range []string{"2006-01-02", "02/01/2006", "02-01-2006", "2006/01/02"} {
+		if t, err := time.Parse(layout, v); err == nil {
+			return &t, nil
+		}
+	}
+	return nil, fmt.Errorf("tanggal %q tidak valid", v)
+}
+
+func parseImportTeachers(rows [][]string) ([]store.ImportedTeacher, error) {
+	if len(rows) < 2 {
+		return nil, errors.New("file impor tidak memiliki data")
+	}
+	h := rows[0]
+	idxNIP := headerIndex(h, "NIP", "NIP Baru", "Nomor Induk Pegawai")
+	idxName := headerIndex(h, "Nama", "Nama ASN", "Nama Pegawai")
+	idxASN := headerIndex(h, "Jenis ASN", "Status ASN", "ASN Type", "Status Kepegawaian")
+	idxUnitCode := headerIndex(h, "Kode Unit", "Kode Sekolah", "Kode")
+	idxUnit := headerIndex(h, "Unit", "Unit Kerja", "Nama Unit", "Sekolah")
+	idxUnitType := headerIndex(h, "Jenis Unit", "Tipe Unit", "Type")
+	idxGol := headerIndex(h, "Pangkat Golongan", "Pangkat/Gol", "Golongan", "Pangkat")
+	idxMKG := headerIndex(h, "Masa Kerja Tahun", "Masa Kerja", "MKG")
+	idxTMT := headerIndex(h, "TMT KGB Terakhir", "TMT KGB", "TMT")
+	if idxNIP < 0 || idxName < 0 || idxASN < 0 || idxUnit < 0 || idxGol < 0 || idxMKG < 0 {
+		return nil, errors.New("kolom wajib BKN: NIP, nama, jenis ASN, unit, pangkat/golongan, masa kerja")
+	}
+	result := make([]store.ImportedTeacher, 0, len(rows)-1)
+	for _, row := range rows[1:] {
+		if strings.TrimSpace(cell(row, idxNIP)) == "" {
+			continue
+		}
+		mkg, err := strconv.Atoi(strings.TrimSpace(cell(row, idxMKG)))
+		if err != nil {
+			mkg = -1
+		}
+		asn := strings.ToLower(cell(row, idxASN))
+		if strings.Contains(asn, "pppk") || strings.Contains(asn, "p3k") {
+			asn = "pppk"
+		} else if strings.Contains(asn, "pns") {
+			asn = "pns"
+		}
+		unitCode := cell(row, idxUnitCode)
+		if unitCode == "" {
+			unitCode = cell(row, idxUnit)
+		}
+		unitType := strings.ToLower(cell(row, idxUnitType))
+		if unitType == "" {
+			unitType = "smp"
+		}
+		if !strings.Contains("korwil smp skb", unitType) {
+			unitType = "smp"
+		}
+		tmt, err := parseDateCell(cell(row, idxTMT))
+		if err != nil {
+			tmt = nil
+		}
+		result = append(result, store.ImportedTeacher{NIP: cell(row, idxNIP), Name: cell(row, idxName), ASNType: asn, UnitCode: unitCode, UnitName: cell(row, idxUnit), UnitType: unitType, PangkatGol: cell(row, idxGol), MasaKerjaTahun: mkg, TMTKGBLast: tmt})
+	}
+	return result, nil
+}
+
+func parseImportStaff(rows [][]string) ([]store.ImportedStaffUser, error) {
+	if len(rows) < 2 {
+		return nil, errors.New("file akun petugas tidak memiliki data")
+	}
+	h := rows[0]
+	idxUser := headerIndex(h, "Username", "User", "Nama Pengguna")
+	idxPass := headerIndex(h, "Password", "Kata Sandi")
+	idxRole := headerIndex(h, "Role", "Peran")
+	idxName := headerIndex(h, "Nama", "Nama Petugas")
+	if idxUser < 0 || idxPass < 0 || idxRole < 0 || idxName < 0 {
+		return nil, errors.New("kolom wajib akun: username, password, role, nama")
+	}
+	result := make([]store.ImportedStaffUser, 0, len(rows)-1)
+	for _, row := range rows[1:] {
+		if cell(row, idxUser) == "" {
+			continue
+		}
+		result = append(result, store.ImportedStaffUser{Username: cell(row, idxUser), Password: cell(row, idxPass), Role: strings.ToLower(cell(row, idxRole)), Name: cell(row, idxName), UnitCode: cell(row, headerIndex(h, "Kode Unit", "Kode Sekolah")), UnitName: cell(row, headerIndex(h, "Unit", "Unit Kerja", "Nama Unit")), UnitType: cell(row, headerIndex(h, "Jenis Unit", "Tipe Unit")), NIK: cell(row, headerIndex(h, "NIK")), SignatureImageBase64: cell(row, headerIndex(h, "Signature Base64", "TTD Base64"))})
+	}
+	return result, nil
+}
+
+func (s *Server) handleImportBKN(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxImportSize)
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "FILE_REQUIRED", "File BKN wajib diunggah.")
+		return
+	}
+	defer file.Close()
+	rows, err := readTabularUpload(file, header.Filename)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "IMPORT_INVALID", err.Error())
+		return
+	}
+	teachers, err := parseImportTeachers(rows)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "IMPORT_INVALID", err.Error())
+		return
+	}
+	result, err := store.ImportTeachers(r.Context(), s.Pool, userFrom(r).ID, header.Filename, teachers, auth.HashPassword)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "IMPORT_FAILED", "Impor BKN gagal.")
+		return
+	}
+	writeData(w, http.StatusOK, result)
+}
+
+func (s *Server) handleImportUsers(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxImportSize)
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "FILE_REQUIRED", "File akun petugas wajib diunggah.")
+		return
+	}
+	defer file.Close()
+	rows, err := readTabularUpload(file, header.Filename)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "IMPORT_INVALID", err.Error())
+		return
+	}
+	users, err := parseImportStaff(rows)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "IMPORT_INVALID", err.Error())
+		return
+	}
+	result, err := store.ImportStaffUsers(r.Context(), s.Pool, userFrom(r).ID, users, auth.HashPassword)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "IMPORT_FAILED", "Impor akun petugas gagal.")
+		return
+	}
+	writeData(w, http.StatusOK, result)
+}
+
+func (s *Server) handleAdminTeachers(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	items, total, err := store.ListTeachers(r.Context(), s.Pool, r.URL.Query().Get("q"), limit, offset)
+	if err != nil {
+		writeErr(w, 500, "INTERNAL", "Gagal mengambil master guru.")
+		return
+	}
+	writeDataMeta(w, 200, items, map[string]any{"limit": limit, "offset": offset, "total": total})
+}
+func (s *Server) handleAdminTeacherDetail(w http.ResponseWriter, r *http.Request) {
+	id, err := parsePathID(r, "id")
+	if err != nil {
+		writeErr(w, 400, "INVALID_ID", "ID guru tidak valid.")
+		return
+	}
+	item, err := store.GetTeacherByID(r.Context(), s.Pool, id)
+	if err != nil {
+		if mapStoreError(w, err) {
+			return
+		}
+		writeErr(w, 500, "INTERNAL", "Gagal mengambil guru.")
+		return
+	}
+	writeData(w, 200, item)
+}
+func (s *Server) handleAdminUnits(w http.ResponseWriter, r *http.Request) {
+	items, err := store.ListUnits(r.Context(), s.Pool)
+	if err != nil {
+		writeErr(w, 500, "INTERNAL", "Gagal mengambil unit.")
+		return
+	}
+	writeData(w, 200, items)
+}
+func (s *Server) handleAdminCreateUnit(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Code string `json:"code"`
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	if decodeJSON(r, &req) != nil || req.Code == "" || req.Name == "" {
+		writeErr(w, 400, "VALIDATION_ERROR", "Kode, nama, dan tipe unit wajib diisi.")
+		return
+	}
+	if req.Type != "korwil" && req.Type != "smp" && req.Type != "skb" {
+		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "Tipe unit harus korwil, smp, atau skb.")
+		return
+	}
+	item, err := store.CreateUnit(r.Context(), s.Pool, req.Code, req.Name, req.Type)
+	if err != nil {
+		if store.IsUniqueViolation(err) {
+			writeErr(w, 409, "CONFLICT", "Kode unit sudah ada.")
+			return
+		}
+		writeErr(w, 500, "INTERNAL", "Gagal membuat unit.")
+		return
+	}
+	_ = store.TouchAudit(r.Context(), s.Pool, userFrom(r).ID, "buat_unit", nil, clientIP(r))
+	writeData(w, 201, item)
+}
+func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
+	items, err := store.ListUsers(r.Context(), s.Pool, r.URL.Query().Get("q"))
+	if err != nil {
+		writeErr(w, 500, "INTERNAL", "Gagal mengambil pengguna.")
+		return
+	}
+	writeData(w, 200, items)
+}
+func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		Role      string `json:"role"`
+		Name      string `json:"name"`
+		UnitID    *int64 `json:"unit_id"`
+		NIK       string `json:"nik"`
+		Signature string `json:"signature_image_base64"`
+	}
+	if decodeJSON(r, &req) != nil || req.Username == "" || req.Password == "" || req.Role == "" || req.Name == "" {
+		writeErr(w, 400, "VALIDATION_ERROR", "Username, password, role, dan nama wajib diisi.")
+		return
+	}
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		writeErr(w, 500, "INTERNAL", "Password gagal diproses.")
+		return
+	}
+	item, err := store.CreateStaffUser(r.Context(), s.Pool, req.Username, hash, req.Role, req.Name, req.UnitID, req.NIK, req.Signature)
+	if err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			writeErr(w, 409, "CONFLICT", "Username sudah dipakai.")
+			return
+		}
+		writeErr(w, 400, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	_ = store.TouchAudit(r.Context(), s.Pool, userFrom(r).ID, "buat_pengguna", nil, clientIP(r))
+	writeData(w, 201, item)
+}
+func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
+	id, err := parsePathID(r, "id")
+	if err != nil {
+		writeErr(w, 400, "INVALID_ID", "ID pengguna tidak valid.")
+		return
+	}
+	var req struct {
+		Name      *string `json:"name"`
+		Role      *string `json:"role"`
+		UnitID    **int64 `json:"unit_id"`
+		Active    *bool   `json:"is_active"`
+		Password  *string `json:"password"`
+		NIK       *string `json:"nik"`
+		Signature *string `json:"signature_image_base64"`
+	}
+	if decodeJSON(r, &req) != nil {
+		writeErr(w, 400, "VALIDATION_ERROR", "Data pengguna tidak valid.")
+		return
+	}
+	var hash *string
+	if req.Password != nil {
+		h, e := auth.HashPassword(*req.Password)
+		if e != nil {
+			writeErr(w, 500, "INTERNAL", "Password gagal diproses.")
+			return
+		}
+		hash = &h
+	}
+	item, err := store.UpdateStaffUser(r.Context(), s.Pool, id, req.Name, req.Role, req.UnitID, req.Active, hash, req.NIK, req.Signature)
+	if err != nil {
+		if mapStoreError(w, err) {
+			return
+		}
+		writeErr(w, 500, "INTERNAL", "Gagal memperbarui pengguna.")
+		return
+	}
+	writeData(w, 200, item)
+}
+func (s *Server) handleAdminSalaryScales(w http.ResponseWriter, r *http.Request) {
+	items, err := store.ListSalaryScales(r.Context(), s.Pool, r.URL.Query().Get("asn_type"), r.URL.Query().Get("golongan"))
+	if err != nil {
+		writeErr(w, 500, "INTERNAL", "Gagal mengambil skala gaji.")
+		return
+	}
+	writeData(w, 200, items)
+}
+func (s *Server) handleAdminImportSalary(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxImportSize)
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, 400, "FILE_REQUIRED", "File skala gaji wajib diunggah.")
+		return
+	}
+	defer file.Close()
+	rows, err := readTabularUpload(file, header.Filename)
+	if err != nil {
+		writeErr(w, 422, "IMPORT_INVALID", err.Error())
+		return
+	}
+	if len(rows) < 2 {
+		writeErr(w, 422, "IMPORT_INVALID", "File skala kosong.")
+		return
+	}
+	h := rows[0]
+	ia, ig, im, ii := headerIndex(h, "Jenis ASN", "ASN Type"), headerIndex(h, "Golongan", "Pangkat/Gol"), headerIndex(h, "Masa Kerja Tahun", "Masa Kerja", "MKG"), headerIndex(h, "Gaji", "Gaji Pokok")
+	if ia < 0 || ig < 0 || im < 0 || ii < 0 {
+		writeErr(w, 422, "IMPORT_INVALID", "Kolom skala: jenis ASN, golongan, masa kerja, gaji.")
+		return
+	}
+	scales := make([]store.SalaryScale, 0)
+	for _, row := range rows[1:] {
+		m, e := strconv.Atoi(cell(row, im))
+		if e != nil {
+			continue
+		}
+		scales = append(scales, store.SalaryScale{ASNType: strings.ToLower(cell(row, ia)), Golongan: cell(row, ig), MasaKerjaTahun: m, Gaji: cell(row, ii)})
+	}
+	if err := store.UpsertSalaryScales(r.Context(), s.Pool, scales); err != nil {
+		writeErr(w, 500, "IMPORT_FAILED", "Impor skala gaji gagal.")
+		return
+	}
+	_ = store.TouchAudit(r.Context(), s.Pool, userFrom(r).ID, "impor_skala_gaji", nil, clientIP(r))
+	writeData(w, 200, map[string]any{"rows_imported": len(scales)})
+}
+func (s *Server) handleAdminTemplates(w http.ResponseWriter, r *http.Request) {
+	items, err := store.ListTemplates(r.Context(), s.Pool)
+	if err != nil {
+		writeErr(w, 500, "INTERNAL", "Gagal mengambil template nomor.")
+		return
+	}
+	writeData(w, 200, items)
+}
+func (s *Server) handleAdminCreateTemplate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Pattern string `json:"pattern"`
+	}
+	if decodeJSON(r, &req) != nil {
+		writeErr(w, 400, "VALIDATION_ERROR", "Template tidak valid.")
+		return
+	}
+	item, err := store.CreateTemplate(r.Context(), s.Pool, strings.TrimSpace(req.Pattern))
+	if err != nil {
+		writeErr(w, 400, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	_ = store.TouchAudit(r.Context(), s.Pool, userFrom(r).ID, "ubah_template_nomor", nil, clientIP(r))
+	writeData(w, 201, item)
+}
+func (s *Server) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
+	var sid *int64
+	if raw := r.URL.Query().Get("submission_id"); raw != "" {
+		v, e := strconv.ParseInt(raw, 10, 64)
+		if e != nil {
+			writeErr(w, 400, "INVALID_ID", "ID pengajuan tidak valid.")
+			return
+		}
+		sid = &v
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := store.ListAuditLogs(r.Context(), s.Pool, sid, r.URL.Query().Get("action"), limit)
+	if err != nil {
+		writeErr(w, 500, "INTERNAL", "Gagal mengambil audit.")
+		return
+	}
+	writeData(w, 200, items)
+}

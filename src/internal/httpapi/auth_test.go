@@ -103,7 +103,21 @@ func testPoolDB(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Skipf("database uji tidak tersedia: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	lockConn, err := pool.Acquire(ctx)
+	if err != nil {
+		pool.Close()
+		t.Skipf("koneksi lock database uji tidak tersedia: %v", err)
+	}
+	if _, err := lockConn.Exec(ctx, `SELECT pg_advisory_lock(hashtext('si-cendikia-test-suite'))`); err != nil {
+		lockConn.Release()
+		pool.Close()
+		t.Skipf("lock database uji tidak tersedia: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = lockConn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext('si-cendikia-test-suite'))`)
+		lockConn.Release()
+		pool.Close()
+	})
 	return pool
 }
 

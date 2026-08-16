@@ -113,6 +113,17 @@ CREATE INDEX idx_submissions_teacher ON submissions (teacher_id);
 CREATE INDEX idx_teachers_unit       ON teachers (unit_id);
 CREATE INDEX idx_audit_submission    ON audit_logs (submission_id, created_at);
 
+-- Hanya satu pengajuan aktif per guru. Status terbit adalah riwayat final.
+CREATE UNIQUE INDEX uq_submission_one_active_per_teacher
+    ON submissions (teacher_id)
+    WHERE status <> 'terbit';
+
 -- Hanya satu template nomor surat aktif pada satu waktu (ERD §5)
 CREATE UNIQUE INDEX uq_letter_template_active
     ON letter_number_templates (is_active) WHERE is_active;
+
+-- Template awal dapat diganti admin, tetapi sistem langsung dapat menerbitkan surat
+-- setelah instalasi tanpa konfigurasi tersembunyi.
+INSERT INTO letter_number_templates (pattern, is_active)
+SELECT '800/{SEQ}/4.2/{YEAR}', true
+WHERE NOT EXISTS (SELECT 1 FROM letter_number_templates);
