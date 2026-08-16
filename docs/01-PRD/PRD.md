@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Versi | 1.2 (final — v1.1 disederhanakan: perubahan data hanya lewat pengajuan KGB; keputusan owner 2026-08-16) |
+| Versi | 1.3 (final — v1.2 + aturan submit ulang, nomor otomatis dari template, gaji dari tabel skala PNS/PPPK; keputusan owner 2026-08-16) |
 | Tanggal | 2026-08-16 |
 | Owner | Chamdani — Dinas Pendidikan Kabupaten Grobogan |
 | Status | Fase 1 dari 6 SELESAI ✅ — lanjut DATABASE ERD |
@@ -63,26 +63,27 @@ Sistem e-KGB live (`kgb.grobogankab.web.id`) berfungsi sebagai referensi domain,
 - F-4 Batasi percobaan login berulang (rate limiting) untuk mencegah brute-force.
 
 ### 5.2 Pengajuan KGB
-- F-5 ASN membuat pengajuan baru; sistem menampilkan data kepegawaian dari master (hasil impor file BKN) beserta perhitungan gaji berkala berikutnya.
+- F-5 ASN membuat pengajuan baru; sistem menampilkan data kepegawaian dari master (hasil impor file BKN) dan **menghitung gaji lama serta gaji berikutnya dari tabel skala gaji resmi** (PNS dan PPPK, berdasarkan masa kerja dan pangkat/golongan). File BKN tidak memuat data gaji.
 - F-6 Unggah berkas persyaratan: **satu berkas PDF saja**, ukuran **maksimal 5MB**. Validasi dilakukan di sisi klien dan server.
 - F-7 Pengajuan yang sudah disubmit terkunci; perbaikan hanya lewat mekanisme tolak-kembali.
 - F-8 ASN memantau status pengajuan secara real-time (status terakhir + riwayat).
 - F-9 ASN mengunduh surat/SK yang sudah terbit.
+- F-9a Khusus PPPK guru, pangkat/golongan **tetap IX** (tidak berubah); perhitungan gajinya memakai skala gaji PPPK golongan IX sesuai masa kerja.
 
 ### 5.3 Verifikasi Berjenjang
 - F-10 Verifikator unit melihat daftar pengajuan unitnya, dapat menyetujui (dengan catatan opsional) atau menolak (dengan catatan wajib).
 - F-11 Verifikator Dinas melihat pengajuan yang lolos unit; hak setujui/tolak yang sama.
-- F-12 Pengajuan ditolak dikembalikan ke ASN; ASN dapat memperbaiki dan submit ulang.
+- F-12 Pengajuan ditolak dikembalikan ke ASN untuk diperbaiki dan di-submit ulang, dengan aturan jenjang: **ditolak unit (Korwil/SMP/SKB) → submit ulang mulai dari unit; ditolak Dinas → submit ulang langsung ke Dinas** (tidak kembali ke unit).
 - F-13 Setiap aksi verifikasi tercatat: siapa, kapan, keputusan, catatan.
 
 ### 5.4 TTE & Penerbitan
 - F-14 Konsep surat/SK KGB dibuat otomatis dari data pengajuan yang disetujui, mengikuti template e-KGB (kop Dinas Pendidikan Grobogan; isi memuat nama, NIP, unit kerja, TMT, gaji lama → gaji baru; blok tanda tangan Kepala Dinas; footer keaslian dokumen).
 - F-15 Pimpinan melakukan TTE dengan **sertifikat elektronik BSrE/BSSN**.
-- F-16 Setelah TTE, surat final berformat PDF diterbitkan dan diberi nomor.
+- F-16 Setelah TTE, surat final berformat PDF diterbitkan dengan **nomor otomatis yang dihasilkan dari template nomor surat**; template tersebut dapat diisi/diatur oleh Dinas (mis. pola nomor urut, kode, tahun).
 - F-17 Surat final tidak dapat diubah (immutable); unduhan dicatat.
 
 ### 5.5 Administrasi
-- F-18 Admin melakukan **impor file BKN sekali di awal** untuk seeding master data ASN (nama, NIP, status PNS/PPPK, unit kerja, golongan/ruang, gaji pokok, TMT KGB terakhir). Setelah seeding, pemutakhiran lewat mekanisme §5.6.
+- F-18 Admin melakukan **impor file BKN sekali di awal** untuk seeding master data ASN (nama, NIP, status PNS/PPPK, unit kerja, pangkat/golongan, masa kerja, TMT KGB terakhir; **tidak termasuk gaji** — gaji dihitung dari tabel skala). Setelah seeding, pemutakhiran lewat mekanisme §5.6.
 - F-19 Admin mengelola unit kerja (Korwil/SMP/SKB) dan menugaskan verifikator.
 - F-20 Admin menunjuk pejabat TTE.
 - F-21 Audit trail dapat dilihat admin untuk semua pengajuan.
@@ -120,6 +121,9 @@ Sistem e-KGB live (`kgb.grobogankab.web.id`) berfungsi sebagai referensi domain,
 | 3 | Mekanisme TTE | **Sertifikat elektronik BSrE/BSSN** (kedepannya; desain harus mengakomodasi) |
 | 4 | Sumber data guru | **File BKN milik Dinas Pendidikan** — impor **hanya sekali di awal** sebagai seeding; perubahan data selanjutnya dilakukan **melalui pengajuan KGB** sekalian bukti dukung & kelengkapan berkas (nilai yang terbit otomatis memperbarui master data) |
 | 5 | Format surat | **Mengikuti template e-KGB** yang sudah ada (acuan resmi) |
+| 6 | Submit ulang setelah ditolak | **Ditolak Korwil/unit → ulang dari unit; ditolak Dinas → langsung dari Dinas** |
+| 7 | Nomor surat | **Otomatis dari template yang dapat diisi Dinas** (bukan format tetap di kode) |
+| 8 | Data gaji | **Tidak ada di file BKN**; dihitung dari **tabel skala gaji PNS & PPPK terbaru** sesuai masa kerja dan pangkat/golongan. PPPK guru pangkat/golongan **tetap IX** |
 
 ## 9. Lampiran: Referensi Domain (dari sistem live)
 

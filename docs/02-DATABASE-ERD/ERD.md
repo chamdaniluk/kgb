@@ -1,15 +1,16 @@
-# DATABASE ERD — SI CENDIKIA v0.3 (DRAF)
+# DATABASE ERD — SI CENDIKIA v0.4 (DRAF)
 
-> Fase 2 dari 6. Sumber: PRD v1.2 (final) + referensi sistem e-KGB. Menunggu review owner.
+> Fase 2 dari 6. Sumber: PRD v1.3 (final) + referensi sistem e-KGB. Menunggu review owner.
 
 ## 1. Prinsip Desain
 
-1. **Sederhana & ringan** (NF-1, NF-2): 8 tabel total, monolitik, tanpa tabel yang "suatu hari mungkin berguna".
+1. **Sederhana & ringan** (NF-1, NF-2): 9 tabel total, monolitik, tanpa tabel yang "suatu hari mungkin berguna".
 2. **Snapshot data penting**: pengajuan menyimpan salinan gaji saat diajukan, agar perubahan master data BKN di kemudian hari tidak mengubah surat yang sudah terbit.
 3. **Satu berkas = kolom pada pengajuan**: keputusan owner menetapkan tepat 1 PDF per pengajuan, maka tidak perlu tabel lampiran terpisah (lebih sederhana, lebih sedikit join).
 4. **Audit trail terpisah**: semua aksi dicatat di satu tabel log yang tidak pernah di-update/dihapus.
 5. Surat final **immutable**: baris `letters` tidak pernah diubah setelah terbit.
 6. **Perubahan data lewat pengajuan KGB** (PRD F-22..F-24): nilai perubahan dibawa pengajuan; master data `teachers` diperbarui otomatis saat surat diterbitkan. Tidak ada tabel perubahan terpisah.
+7. **Gaji tidak disimpan di master** (PRD F-5, keputusan owner #8): gaji dihitung dari tabel `salary_scales` (PNS & PPPK terbaru) berdasarkan masa kerja dan pangkat/golongan; pengajuan men-snapshot hasilnya saat submit. PPPK guru golongan tetap IX.
 
 ## 2. Diagram ER (Mermaid)
 
@@ -23,6 +24,8 @@ erDiagram
     users ||--o{ audit_logs : "aktor"
     submissions ||--o{ audit_logs : "objek"
     users ||--o{ bkn_imports : "pelaksana impor"
+    salary_scales ||--o{ submissions : "dasar hitung gaji"
+    letter_number_templates ||--o{ letters : "pola nomor"
 
     units {
         int id PK
@@ -53,8 +56,8 @@ erDiagram
         string name
         string asn_type UK "pns|pppk"
         int unit_id FK
-        string pangkat_gol "mis. III/a; PPPK: golongan"
-        numeric gaji_pokok
+        string pangkat_gol "mis. III/a; PPPK guru: tetap IX"
+        int masa_kerja_tahun
         date tmt_kgb_last "TMT KGB terakhir"
         timestamptz created_at
         timestamptz updated_at
@@ -79,7 +82,8 @@ erDiagram
     letters {
         int id PK
         int submission_id FK,UK
-        string number UK "nomor surat dinas"
+        int template_id FK "letter_number_templates"
+        string number UK "nomor surat (dari template otomatis)"
         string pdf_path "file final immutable"
         int signer_user_id FK "pimpinan"
         string tte_receipt_id "resi BSrE/BSSN (kedepannya)"
@@ -111,9 +115,19 @@ erDiagram
 
     salary_scales {
         int id PK
-        string golongan UK "mis. III/a (PNS) atau golongan PPPK"
-        int masa_kerja_tahun UK
+        string asn_type "pns|pppk"
+        string golongan "mis. III/a (PNS) atau IX (PPPK)"
+        int masa_kerja_tahun
         numeric gaji
+        "UNIQUE (asn_type, golongan, masa_kerja_tahun)"
+    }
+
+    letter_number_templates {
+        int id PK
+        string pattern "mis. 800/{SEQ}/4.2/{YEAR} — diisi Dinas"
+        bool is_active "hanya satu template aktif"
+        timestamptz created_at
+        timestamptz updated_at
     }
 ```
 
@@ -126,40 +140,41 @@ stateDiagram-v2
     menunggu_unit --> dikembalikan_unit : verifikator unit TOLAK (catatan wajib)
     menunggu_dinas --> menunggu_tte : verifikator dinas SETUJU
     menunggu_dinas --> dikembalikan_dinas : verifikator dinas TOLAK (catatan wajib)
-    dikembalikan_unit --> menunggu_unit : ASN perbaiki & submit ulang
-    dikembalikan_dinas --> menunggu_unit : ASN perbaiki & submit ulang (mulai dari unit lagi)
+    dikembalikan_unit --> menunggu_unit : ASN perbaiki & submit ulang (dari unit)
+    dikembalikan_dinas --> menunggu_dinas : ASN perbaiki & submit ulang (LANGSUNG ke Dinas)
     menunggu_tte --> terbit : TTE pimpinan + PDF diterbitkan
     terbit --> [*]
 ```
 
 Nilai kolom `submissions.status`: `menunggu_unit`, `menunggu_dinas`, `menunggu_tte`, `dikembalikan_unit`, `dikembalikan_dinas`, `terbit`.
 
-**Asumsi yang perlu konfirmasi** (lihat §6): pengajuan yang ditolak Dinas lalu di-submit ulang harus melewati verifikasi unit lagi dari awal (jenjang penuh).
+**Aturan submit ulang (keputusan owner)**: ditolak unit (Korwil/SMP/SKB) → submit ulang mulai dari `menunggu_unit`; ditolak Dinas → submit ulang langsung `menunggu_dinas` (tidak kembali ke unit). Implementasi: satu kolom `status` cukup; riwayat lengkap tersimpan di `audit_logs`.
 
 ## 4. Catatan Per Tabel
 
 | Tabel | Catatan penting |
 |---|---|
 | `users` | Akun ASN diprovisi otomatis saat impor BKN: `username = NIP`, `password = hash(NIP)` (kebijakan owner, F-1). Rate-limiting login tidak pakai tabel (implementasi in-memory, seperti e-KGB) demi keringanan. |
-| `teachers` | Master data ASN hasil impor file BKN (F-18). Satu guru = satu baris; impor berikutnya meng-update baris yang sudah ada berdasarkan NIP. |
-| `submissions` | `current_salary`/`next_salary` di-snapshot saat submit. `file_*` wajib terisi sebelum status meninggalkan draf. ASN boleh punya beberapa pengajuan historis (KGB tiap 2 tahun), tapi hanya satu yang aktif berproses (enforced di aplikasi). Sekaligus sarana perubahan data (PRD F-22): saat status `terbit`, nilai yang disetujui diterapkan ke `teachers` (`gaji_pokok ← next_salary`, `tmt_kgb_last ← proposed_tmt`). |
-| `letters` | Satu surat per pengajuan (`submission_id` UNIQUE). `number` mengikuti tata nomor surat dinas (lihat §6). Setelah `issued_at` terisi, baris tidak boleh diubah. |
+| `teachers` | Master data ASN hasil impor file BKN (F-18). Satu guru = satu baris. Kolom: identitas + pangkat/golongan + **masa kerja** + TMT KGB terakhir. **Tidak ada kolom gaji** — gaji dihitung dari `salary_scales`. PPPK guru: `pangkat_gol` divalidasi tetap `IX`. |
+| `submissions` | `current_salary`/`next_salary` di-snapshot saat submit, **dihitung dari `salary_scales`** (masa kerja saat ini dan masa kerja +2, pangkat/golongan guru). `file_*` wajib terisi sebelum status meninggalkan draf. ASN boleh punya beberapa pengajuan historis (KGB tiap 2 tahun), tapi hanya satu yang aktif berproses (enforced di aplikasi). Sekaligus sarana perubahan data (PRD F-22): saat status `terbit`, nilai yang disetujui diterapkan ke `teachers` (`tmt_kgb_last ← proposed_tmt`). |
+| `letters` | Satu surat per pengajuan (`submission_id` UNIQUE). `number` dihasilkan dari `letter_number_templates` aktif saat terbit (token `{SEQ}` nomor urut per tahun, `{YEAR}` tahun; token lain bebas diisi Dinas). Setelah `issued_at` terisi, baris tidak boleh diubah. |
 | `audit_logs` | Append-only. Minimal action: `login`, `login_gagal`, `submit`, `setuju_unit`, `tolak_unit`, `setuju_dinas`, `tolak_dinas`, `tte`, `terbit`, `unduh_berkas`, `unduh_surat`, `impor_bkn`. |
 | `bkn_imports` | Riwayat impor untuk keterlacakan admin. Impor hanya sekali di awal (seeding); perubahan data selanjutnya lewat pengajuan KGB (F-22). |
-| `salary_scales` | Tabel referensi skala gaji pokok (golongan × masa kerja) untuk menghitung `next_salary` otomatis; di-seed dari peraturan gaji yang berlaku. Bisa dinonaktifkan jika master data sudah memuat gaji berikutnya. |
+| `salary_scales` | **Wajib** (keputusan owner #8): skala gaji pokok resmi terbaru untuk PNS (PP 5/2024) dan PPPK (Perpres 11/2024) per golongan × masa kerja. Di-seed sekali; pembaruan jika ada regulasi baru. Gaji PPPK guru hanya golongan IX. |
+| `letter_number_templates` | Template nomor surat yang dapat diisi/diatur Dinas (F-16). Hanya satu template `is_active = true` pada satu waktu; perubahan template tidak mengubah surat yang sudah terbit. |
 
 ## 5. Indeks & Batasan Penting
 
 - `users(username)` UNIQUE, `teachers(nip)` UNIQUE, `teachers(user_id)` UNIQUE
 - `letters(number)` UNIQUE, `letters(submission_id)` UNIQUE
-- `salary_scales(golongan, masa_kerja_tahun)` UNIQUE
-- Indeks query panas: `submissions(status)`, `submissions(teacher_id)`, `teachers(unit_id)`, `audit_logs(submission_id, created_at)`
-- FK `submissions.teacher_id`, `letters.submission_id`, `audit_logs.submission_id`
+- `salary_scales(asn_type, golongan, masa_kerja_tahun)` UNIQUE
+- `letter_number_templates(is_active)` — parsial, maksimal satu baris aktif
+- Indeks query panas: `submissions(status)`, `submissions(teacher_id)`, `teachers(unit_id)`, `audit_logs(submission_id, created_at)`, `salary_scales(asn_type, golongan, masa_kerja_tahun)`
+- FK `submissions.teacher_id`, `letters.submission_id`, `letters.template_id`, `audit_logs.submission_id`
 
 ## 6. Item yang Perlu Diputuskan Sebelum Skema Final
 
-1. **Submit ulang setelah tolak Dinas** — kembali ke antrean unit (jenjang penuh, asumsi saya) atau langsung ke Dinas?
-2. **Tata nomor surat** — format pastinya (mis. `800/xxx/4.2/2026`)? Perlu contoh nomor surat KGB yang berlaku di Dinas.
-3. **Masa berlaku / periode** — perlu kolom tahun periode pengajuan, atau cukup dari `proposed_tmt`?
-4. **`salary_scales` dipakai atau tidak** — tergantung apakah file BKN Dinas sudah memuat gaji berikutnya. Kalau sudah, tabel ini dihapus (lebih ringan).
-5. **Basis data** — keputusan final ada di fase TECH STACK; ERD ini ditulis netral (tipe PostgreSQL sebagai acuan karena e-KGB memakai PostgreSQL 16).
+Sudah diputuskan owner: aturan submit ulang, template nomor surat, sumber gaji (lihat decision log). Sisa item kecil:
+
+1. **Kolom tahun periode** — asumsi default: tidak perlu; periode diturunkan dari `proposed_tmt`. Jika Dinas butuh laporan per tahun anggaran, tambahkan kemudian.
+2. **Basis data** — keputusan final di fase TECH STACK; ERD ini ditulis netral (tipe PostgreSQL sebagai acuan karena e-KGB memakai PostgreSQL 16).
