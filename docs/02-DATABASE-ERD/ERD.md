@@ -1,6 +1,6 @@
-# DATABASE ERD — SI CENDIKIA v0.4 (DRAF)
+# DATABASE ERD — SI CENDIKIA v1.0 (FINAL)
 
-> Fase 2 dari 6. Sumber: PRD v1.3 (final) + referensi sistem e-KGB. Menunggu review owner.
+> Fase 2 dari 6 — **FINAL, disetujui owner 2026-08-16**. Sumber: PRD v1.3 + referensi sistem e-KGB.
 
 ## 1. Prinsip Desain
 
@@ -11,6 +11,23 @@
 5. Surat final **immutable**: baris `letters` tidak pernah diubah setelah terbit.
 6. **Perubahan data lewat pengajuan KGB** (PRD F-22..F-24): nilai perubahan dibawa pengajuan; master data `teachers` diperbarui otomatis saat surat diterbitkan. Tidak ada tabel perubahan terpisah.
 7. **Gaji tidak disimpan di master** (PRD F-5, keputusan owner #8): gaji dihitung dari tabel `salary_scales` (PNS & PPPK terbaru) berdasarkan masa kerja dan pangkat/golongan; pengajuan men-snapshot hasilnya saat submit. PPPK guru golongan tetap IX.
+
+### 7a. Logika Pencarian Gaji (PENTING — jangan tertukar)
+
+```
+Gaji PNS  = salary_scales WHERE asn_type='pns'
+                            AND golongan = <pangkat_gol guru>   -- mis. III/a, IV/b
+                            AND masa_kerja_tahun = <masa kerja>
+            → pangkat/golongan DAN masa kerja sama-sama menentukan gaji.
+
+Gaji PPPK = salary_scales WHERE asn_type='pppk'
+                            AND golongan = 'IX'                 -- guru: tetap IX
+                            AND masa_kerja_tahun = <masa kerja>
+```
+
+- KGB menaikkan gaji satu tingkat masa kerja (+2 tahun): `current_salary` = lookup masa kerja saat ini; `next_salary` = lookup masa kerja + 2 (golongan sama).
+- Jika kombinasi tidak ditemukan di tabel (mis. masa kerja di luar rentang tabel), pengajuan ditolak sistem dengan pesan jelas, bukan ditebak.
+- PNS dan PPPK memakai tabel yang sama tetapi **dimensi `asn_type` memisahkan keduanya** — tidak mungkin tertukar.
 
 ## 2. Diagram ER (Mermaid)
 
@@ -172,9 +189,9 @@ Nilai kolom `submissions.status`: `menunggu_unit`, `menunggu_dinas`, `menunggu_t
 - Indeks query panas: `submissions(status)`, `submissions(teacher_id)`, `teachers(unit_id)`, `audit_logs(submission_id, created_at)`, `salary_scales(asn_type, golongan, masa_kerja_tahun)`
 - FK `submissions.teacher_id`, `letters.submission_id`, `letters.template_id`, `audit_logs.submission_id`
 
-## 6. Item yang Perlu Diputuskan Sebelum Skema Final
+## 6. Catatan Penutup
 
-Sudah diputuskan owner: aturan submit ulang, template nomor surat, sumber gaji (lihat decision log). Sisa item kecil:
-
-1. **Kolom tahun periode** — asumsi default: tidak perlu; periode diturunkan dari `proposed_tmt`. Jika Dinas butuh laporan per tahun anggaran, tambahkan kemudian.
-2. **Basis data** — keputusan final di fase TECH STACK; ERD ini ditulis netral (tipe PostgreSQL sebagai acuan karena e-KGB memakai PostgreSQL 16).
+Semua item terbuka telah diputuskan owner (lihat decision log):
+- Kolom tahun periode: **tidak perlu** — periode diturunkan dari `proposed_tmt` (disetujui owner).
+- Aturan submit ulang, template nomor surat, sumber gaji: final.
+- Basis data: keputusan teknis final di fase TECH STACK; ERD ini ditulis netral (tipe PostgreSQL sebagai acuan karena e-KGB memakai PostgreSQL 16).
