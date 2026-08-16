@@ -23,8 +23,8 @@ PRD  >  DATABASE ERD  >  API DOCUMENTATION  >  UI/UX  >  ARCHITECTURE  >  TECH S
 | 3. API DOCUMENTATION | `docs/03-API-DOCUMENTATION/` | ✅ v1.2 FINAL (2026-08-16) |
 | 4. UI/UX | `docs/04-UIUX/` | ✅ v1.0 FINAL (2026-08-16) |
 | 5. ARCHITECTURE | `docs/05-ARCHITECTURE/` | ✅ v1.1 FINAL (2026-08-16) |
-| 6. TECH STACK | `docs/06-TECH-STACK/` | 🟡 draf v0.2, menunggu konfirmasi owner |
-| 7. IMPLEMENTASI | `src/` | ⬜ hanya setelah 1–6 selesai dan disetujui owner |
+| 6. TECH STACK | `docs/06-TECH-STACK/` | ✅ v1.0 FINAL (2026-08-16) |
+| 7. IMPLEMENTASI | `src/` | ⬜ dimulai setelah persetujuan owner |
 
 **Aturan keras:**
 - Satu fase hanya boleh dikerjakan kalau artefak fase sebelumnya sudah ada dan disetujui.

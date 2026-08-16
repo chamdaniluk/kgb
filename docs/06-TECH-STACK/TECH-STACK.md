@@ -1,6 +1,7 @@
-# TECH STACK — SI CENDIKIA v0.2 (DRAF)
+# TECH STACK — SI CENDIKIA v1.0 (FINAL)
 
-> Fase 6 dari 6 (terakhir sebelum implementasi). Sumber: PRD v1.6, ERD v1.0, API v1.2, UI/UX v1.0, ARCHITECTURE v1.1. Menunggu konfirmasi owner.
+> Fase 6 dari 6 — **FINAL, disetujui owner 2026-08-16**. Sumber: PRD v1.6, ERD v1.0, API v1.2, UI/UX v1.0, ARCHITECTURE v1.1.
+> Keputusan owner: PDF = `wkhtmltopdf`; frontend = server-rendered + vanilla JS (mengikuti rekomendasi).
 
 ## 1. Prinsip Pemilihan
 
@@ -51,22 +52,13 @@ src/
 
 ## 4. Keputusan yang Perlu Konfirmasi Owner
 
-### 4.1 Mesin PDF surat (perlu konfirmasi)
+### 4.1 Mesin PDF surat — KEPUTUSAN FINAL
 
-Template surat e-KGB adalah HTML+CSS (kop, @page margin, DejaVu Serif/Sans). Tiga opsi:
+**`wkhtmltopdf` binary statis** (rekomendasi diterima owner, 2026-08-16). Template e-KGB adalah HTML+CSS sederhana (kop, @page, DejaVu) yang kompatibel. Cadangan terdokumentasi: WeasyPrint jika format surat berkembang di masa depan.
 
-| Opsi | Kelebihan | Kekurangan |
-|---|---|---|
-| **A. `wkhtmltopdf` binary statis** (rekomendasi) | Satu file tanpa runtime; hasil mirip template e-KGB; ~100MB RAM saat dipanggil | Proyek sudah jarang di-upstream (WebKit lama); CSS modern terbatas — template kita sederhana, aman |
-| **B. WeasyPrint (Python)** | CSS paged-media paling lengkap; aktif dipelihara | Butuh runtime Python ~150-250MB; dua runtime di server |
-| **C. Headless Chromium (chromedp)** | Fidelitas tertinggi | Paling berat (~300MB+); VPS 1.9GB berisiko saat Postgres ikut jalan |
+### 4.2 Frontend — KEPUTUSAN FINAL
 
-Rekomendasi: **A untuk pilot** (paling ringan, template kompatibel). Cadangan: B jika format surat berkembang.
-
-### 4.2 Frontend (perlu konfirmasi)
-
-- **Rekomendasi: server-rendered + vanilla JS** — tidak ada build step, satu binary, sesuai UI/UX (tanpa framework besar). Grafik statistik pakai CSS bar sederhana.
-- Alternatif: React SPA (konsisten CBT eSchool) — biayanya: toolchain Node, build/deploy terpisah, memori lebih besar. Tidak disarankan untuk aplikasi sesederhana ini (Ponytail: tulis yang minimal).
+**Server-rendered (`html/template`) + vanilla JS** (rekomendasi diterima owner, 2026-08-16). Tanpa build step Node, satu binary, sesuai UI/UX "tanpa framework besar". Grafik statistik memakai CSS bar sederhana.
 
 ### 4.3 Hal lain yang saya putuskan (bisa diubah)
 
