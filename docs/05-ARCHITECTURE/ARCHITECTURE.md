@@ -1,6 +1,6 @@
-# ARCHITECTURE — SI CENDIKIA v1.1 (FINAL)
+# ARCHITECTURE — SI CENDIKIA v1.2 (FINAL)
 
-> Fase 5 dari 6 — **FINAL (v1.1: TTE via eSign Kominfo), disetujui owner 2026-08-16**. Sumber: PRD v1.6, ERD v1.0 FINAL, API v1.2, UI/UX v1.0.
+> Fase 5 dari 6 — **FINAL (v1.2: harmonisasi editorial referensi TTE ke eSign Kominfo, tanpa perubahan desain; v1.1: TTE via eSign Kominfo), disetujui owner 2026-08-16**. Sumber: PRD v1.6, ERD v1.0 FINAL, API v1.2, UI/UX v1.0.
 
 ## 1. Tujuan dan Prinsip Arsitektur
 
@@ -35,16 +35,16 @@ flowchart LR
         APP --> FS
     end
 
-    subgraph EXTERNAL["Layanan Eksternal (kedepannya)"]
-        TTESVC["TTE BSrE/BSSN\n(sertifikat elektronik)"]
+    subgraph EXTERNAL["Layanan Eksternal"]
+        TTESVC["eSign Kominfo\n(sertifikat elektronik BSrE/BSSN)"]
     end
 
     GURU & PET & PIM & ADM --> NGINX
     PUB --> NGINX
-    APP -.->|"POST /letters/{id}/sign"| TTESVC
+    APP -->|"POST /api/v2/sign/pdf"| TTESVC
 ```
 
-Catatan: integrasi TTE BSrE/BSSN ditandai garis putus-putus karena **"kedepannya"** (PRD keputusan #3). Sebelum tersedia, alur TTE berjalan mode simulasi (lihat §6).
+Catatan: TTE memakai layanan eSign Kominfo dengan sertifikat elektronik BSrE/BSSN. Ini integrasi nyata sejak v1.1, bukan mode simulasi (detail alur di §6).
 
 ## 3. Komponen Aplikasi
 
@@ -68,7 +68,7 @@ sequenceDiagram
     participant A as Aplikasi
     participant DB as PostgreSQL
     participant FS as File system
-    participant T as TTE BSrE (kedepannya)
+    participant T as eSign Kominfo (BSrE)
 
     G->>A: POST /auth/login (NIP, NIP)
     A->>DB: cek akun + role
@@ -87,7 +87,7 @@ sequenceDiagram
     G->>A: POST /letters/{id}/sign
     A->>DB: generate nomor (template aktif) + INSERT letters
     A->>A: render PDF surat
-    A->>T: TTE BSrE (kedepannya) / simulasi (sekarang)
+    A->>T: TTE eSign Kominfo (POST /api/v2/sign/pdf)
     A->>FS: simpan PDF final (immutable)
     A->>DB: UPDATE submissions (status=terbit) + UPDATE teachers (tmt_kgb_last) + audit
     A-->>G: 201 + nomor surat
@@ -157,6 +157,6 @@ TTE memakai **layanan resmi eSign Kominfo** — API "Esign Client Service for Us
 |---|---|
 | Gaji tidak ditemukan di skala (masa kerja di luar rentang) | Tolak submit dengan pesan jelas + hubungi Dinas (ERD §7a) |
 | File BKN rusak / format berubah | Validasi impor, laporan baris gagal, rollback parsial dengan catatan |
-| TTE BSrE belum tersedia saat go-live | Mode simulasi jalan; kolom resi siap; kontrak API tetap |
+| Env eSign Kominfo (dev) berubah / tidak stabil | Kredensial & koleksi Postman di `local/`; cek `GET /api/user/status/{nik}` sebelum sign; kegagalan → pengajuan tetap `menunggu_tte`, tanpa data setengah terbit (§6) |
 | Lonjakan masa pengajuan massal | Satu VPS 2GB cukup untuk ribuan guru (beban rendah, cache stats); monitor di fase uji |
 | Password = NIP (keputusan owner) | Rate limit + audit `login_gagal` + hashing kuat sebagai mitigasi (PRD F-4, NF-5) |
