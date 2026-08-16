@@ -1,14 +1,12 @@
-# KGB — Proyek Baru
+# SI CENDIKIA
 
-Repositori induk (umbrella repo) proyek baru tentang **KGB (Kenaikan Gaji Berkala)** untuk lingkungan Dinas Pendidikan Kabupaten Grobogan.
+**Sistem Cepat Efektif Non-stop Digital Informasi Kenaikan Gaji Berkala ASN**
+
+Repositori induk proyek **SI CENDIKIA**: penerbitan surat/SK Kenaikan Gaji Berkala (KGB) bagi ASN (PNS dan PPPK) di lingkungan Dinas Pendidikan Kabupaten Grobogan. Piloting tahap awal: khusus guru.
+
+Sistem ini dibangun **lebih sederhana dan lebih ringan** daripada sistem e-KGB live (`kgb.grobogankab.web.id`, source `/var/www/ekgb`), yang kini hanya menjadi referensi domain.
 
 Repositori ini berisi **dokumen desain + konfigurasi agent**. Kode sumber aplikasi dibuat bertahap mengikuti urutan artefak di bawah.
-
-## Konteks Domain
-
-Sistem e-KGB sudah berjalan (live) di `kgb.grobogankab.web.id` dengan source di `/var/www/ekgb` (CodeIgniter 4.7 + Shield + PostgreSQL 16). Alur utamanya: guru membuat draf + unggah dua dokumen wajib → verifikasi unit (Korwil/SMP/SKB) → pemeriksaan Dinas → persetujuan konsep → penerbitan surat final (PDF, Dompdf). Semua perubahan status diaudit.
-
-Source live itu adalah **bahan referensi domain**, bukan bagian repo ini (jangan dimodifikasi dari sini; ia bukan git repo).
 
 ## Kontrak Utama: Urutan Artefak
 
@@ -20,7 +18,7 @@ PRD  >  DATABASE ERD  >  API DOCUMENTATION  >  UI/UX  >  ARCHITECTURE  >  TECH S
 
 | Fase | Artefak | Status |
 |------|---------|--------|
-| 1. PRD | `docs/01-PRD/` | ⬜ belum mulai |
+| 1. PRD | `docs/01-PRD/` | 🟡 draf v0.1, menunggu review owner |
 | 2. DATABASE ERD | `docs/02-DATABASE-ERD/` | ⬜ belum mulai |
 | 3. API DOCUMENTATION | `docs/03-API-DOCUMENTATION/` | ⬜ belum mulai |
 | 4. UI/UX | `docs/04-UIUX/` | ⬜ belum mulai |
@@ -33,9 +31,17 @@ PRD  >  DATABASE ERD  >  API DOCUMENTATION  >  UI/UX  >  ARCHITECTURE  >  TECH S
 - Perubahan PRD memaksa review ulang semua artefak di bawahnya (efek berantai).
 - Keputusan penting dicatat di `docs/00-DECISIONS.md`.
 
+## Ringkasan Alur Inti (dari brief owner)
+
+1. ASN (guru PNS/PPPK) login dengan **NIP + password (juga NIP)**.
+2. Submit pengajuan KGB + unggah berkas **PDF, maksimal 5MB per file**.
+3. Verifikasi berjenjang: **Korwil/SMP/SKB** (sesuai tempat bekerja) → **Dinas**.
+4. **TTE oleh pimpinan**.
+5. Surat/SK KGB **terbit sebagai PDF**.
+
 ## Toolchain Agent (WAJIB dipakai)
 
-Sama seperti proyek CMS Sekolahku — detail prosedur lengkap di `AGENTS.md`:
+Detail prosedur lengkap di `AGENTS.md`:
 
 | Tool | Fungsi |
 |------|--------|

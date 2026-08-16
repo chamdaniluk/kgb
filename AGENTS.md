@@ -1,4 +1,4 @@
-# AGENTS.md — Proyek KGB
+# AGENTS.md — Proyek SI CENDIKIA
 
 Instruksi wajib untuk SEMUA AI coding agent (Claude Code, Codex, Hermes, dll.) yang bekerja di repositori ini. Baca sampai habis sebelum melakukan apa pun.
 
@@ -59,12 +59,14 @@ PRD  >  DATABASE ERD  >  API DOCUMENTATION  >  UI/UX  >  ARCHITECTURE  >  TECH S
 - Perubahan pada fase di atas memaksa review ulang semua fase di bawahnya.
 - Fase IMPLEMENTASI hanya dibuka setelah keenam artefak selesai dan disetujui.
 
-## ATURAN #3 — KONTEKS DOMAIN KGB
+## ATURAN #3 — KONTEKS DOMAIN SI CENDIKIA
 
-- KGB = **Kenaikan Gaji Berkala** untuk ASN/guru di lingkungan Dinas Pendidikan Kabupaten Grobogan.
-- Sistem live: `kgb.grobogankab.web.id`, source `/var/www/ekgb` (CI 4.7 + Shield + PostgreSQL 16 + Dompdf). Alur: draf guru + 2 dokumen wajib → verifikasi unit (Korwil/SMP/SKB) → pemeriksaan Dinas → persetujuan konsep → penerbitan surat final. Semua transisi diaudit.
+- **SI CENDIKIA** = Sistem Cepat Efektif Non-stop Digital Informasi Kenaikan Gaji Berkala ASN. Sistem baru yang lebih sederhana & ringan untuk menerbitkan surat/SK KGB ASN (PNS & PPPK) Dinas Pendidikan Grobogan; piloting khusus guru.
+- Alur inti (brief owner): login NIP → submit pengajuan + unggah PDF maks 5MB → verifikasi unit (Korwil/SMP/SKB) → verifikasi Dinas → TTE pimpinan → surat terbit PDF.
+- Sistem live e-KGB: `kgb.grobogankab.web.id`, source `/var/www/ekgb` (CI 4.7 + Shield + PostgreSQL 16 + Dompdf) — hanya referensi domain, read-only.
+- PRD draf: `docs/01-PRD/PRD.md` — baca dulu, termasuk open questions, sebelum mengusulkan desain apa pun.
 - Data guru berasal dari sumber resmi: **Dapodik/PTK** (Kemendikdasmen, API publik api.data.belajar.id). Verifikasi kemutakhiran data sebelum mengutip. Jangan pernah mengarang data guru.
-- Keputusan tentang hubungan proyek baru ini dengan sistem live (rewrite / pengganti / pendamping) ada di `docs/00-DECISIONS.md` — baca dulu sebelum mengusulkan arsitektur.
+- Keputusan besar ada di `docs/00-DECISIONS.md` — baca dulu sebelum mengusulkan arsitektur.
 
 ## ATURAN #4 — CARA KERJA
 
