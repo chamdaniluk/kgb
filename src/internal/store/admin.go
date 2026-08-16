@@ -76,10 +76,45 @@ func IsStaffRole(role string) bool {
 	return role == StaffRoleVerifikatorUnit || role == "verifikator_dinas" || role == StaffRoleAdminDinas || role == StaffRolePimpinan || role == "admin"
 }
 
+func derefOptional(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
 // UpdateStaffUser memperbarui data akun petugas; nil berarti tidak mengubah field.
 func UpdateStaffUser(ctx context.Context, pool *pgxpool.Pool, id int64, name *string, role *string, unitID **int64, active *bool, passwordHash *string, nik *string, signature *string) (UserSummary, error) {
 	if role != nil && !IsStaffRole(*role) {
 		return UserSummary{}, errors.New("role petugas tidak valid")
+	}
+	var currentRole string
+	var currentNIK, currentSignature *string
+	var currentActive bool
+	if err := pool.QueryRow(ctx, `SELECT role, nik, signature_image_base64, is_active FROM users WHERE id=$1 AND role <> 'asn'`, id).Scan(&currentRole, &currentNIK, &currentSignature, &currentActive); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return UserSummary{}, ErrNotFound
+		}
+		return UserSummary{}, err
+	}
+	targetRole := currentRole
+	if role != nil {
+		targetRole = *role
+	}
+	targetNIK := derefOptional(currentNIK)
+	if nik != nil {
+		targetNIK = strings.TrimSpace(*nik)
+	}
+	targetSignature := derefOptional(currentSignature)
+	if signature != nil {
+		targetSignature = strings.TrimSpace(*signature)
+	}
+	wantsActive := currentActive
+	if active != nil {
+		wantsActive = *active
+	}
+	if targetRole == StaffRolePimpinan && wantsActive && (targetNIK == "" || targetSignature == "") {
+		return UserSummary{}, errors.New("akun pimpinan harus memiliki NIK dan spesimen TTD sebelum diaktifkan")
 	}
 	var u UserSummary
 	var passwordChanged any
