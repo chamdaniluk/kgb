@@ -56,6 +56,40 @@ type Submission struct {
 	SnapshotLastSKTMTBerlaku *time.Time     `json:"snapshot_last_sk_tmt_berlaku,omitempty"`
 	SnapshotLastSKMasaTahun  *int           `json:"snapshot_last_sk_masa_tahun,omitempty"`
 	SnapshotLastSKMasaBulan  *int           `json:"snapshot_last_sk_masa_bulan,omitempty"`
+	DraftBirthPlace          string         `json:"draft_birth_place,omitempty"`
+	DraftBirthDate           *time.Time     `json:"draft_birth_date,omitempty"`
+	DraftKarpeg              string         `json:"draft_karpeg,omitempty"`
+	DraftPangkat             string         `json:"draft_pangkat,omitempty"`
+	DraftJabatan             string         `json:"draft_jabatan,omitempty"`
+	DraftLastSKPejabat       string         `json:"draft_last_sk_pejabat,omitempty"`
+	DraftLastSKTanggal       *time.Time     `json:"draft_last_sk_tanggal,omitempty"`
+	DraftLastSKNomor         string         `json:"draft_last_sk_nomor,omitempty"`
+	DraftLastSKTMT           *time.Time     `json:"draft_last_sk_tmt,omitempty"`
+	DraftMKGLamaTahun        *int           `json:"draft_mkg_lama_tahun,omitempty"`
+	DraftMKGLamaBulan        *int           `json:"draft_mkg_lama_bulan,omitempty"`
+	DraftMKGBaruTahun        *int           `json:"draft_mkg_baru_tahun,omitempty"`
+	DraftMKGBaruBulan        *int           `json:"draft_mkg_baru_bulan,omitempty"`
+	DraftMasaPerjanjian      string         `json:"draft_masa_perjanjian,omitempty"`
+	DraftPerpanjangan        *time.Time     `json:"draft_perpanjangan_kontrak,omitempty"`
+}
+
+// LetterDraft adalah nilai naskah SK yang dikirim ASN pada usulan.
+type LetterDraft struct {
+	BirthPlace     string
+	BirthDate      *time.Time
+	Karpeg         string
+	Pangkat        string
+	Jabatan        string
+	LastSKPejabat  string
+	LastSKTanggal  *time.Time
+	LastSKNomor    string
+	LastSKTMT      *time.Time
+	MKGLamaTahun   *int
+	MKGLamaBulan   *int
+	MKGBaruTahun   *int
+	MKGBaruBulan   *int
+	MasaPerjanjian string
+	Perpanjangan   *time.Time
 }
 
 // VerificationUnitID returns the unit that owns the current workflow stage.
@@ -71,6 +105,43 @@ func (s Submission) VerificationUnitID() int64 {
 // proposal that must be reviewed together with the KGB request.
 func (s Submission) HasTeacherChange() bool {
 	return s.ProposedPangkatGol != nil || s.ProposedPangkat != nil || s.ProposedJabatan != nil || s.ProposedUnitID != nil
+}
+
+func derefInt(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
+// LetterDraftValues mengembalikan naskah yang akan dicetak dan divalidasi.
+func (s Submission) LetterDraftValues() LetterDraft {
+	return LetterDraft{
+		BirthPlace:     s.DraftBirthPlace,
+		BirthDate:      s.DraftBirthDate,
+		Karpeg:         s.DraftKarpeg,
+		Pangkat:        firstNonEmpty(s.DraftPangkat, s.Pangkat),
+		Jabatan:        firstNonEmpty(s.DraftJabatan, s.Jabatan),
+		LastSKPejabat:  s.DraftLastSKPejabat,
+		LastSKTanggal:  s.DraftLastSKTanggal,
+		LastSKNomor:    s.DraftLastSKNomor,
+		LastSKTMT:      s.DraftLastSKTMT,
+		MKGLamaTahun:   s.DraftMKGLamaTahun,
+		MKGLamaBulan:   s.DraftMKGLamaBulan,
+		MKGBaruTahun:   s.DraftMKGBaruTahun,
+		MKGBaruBulan:   s.DraftMKGBaruBulan,
+		MasaPerjanjian: s.DraftMasaPerjanjian,
+		Perpanjangan:   s.DraftPerpanjangan,
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // AuditLog adalah satu entri jejak audit append-only.

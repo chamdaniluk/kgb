@@ -51,7 +51,7 @@ func TestAlurLengkapPengajuanSampaiTerbit(t *testing.T) {
 		{username: "verifikator-dinas", role: "verifikator_dinas", name: "Verifikator Dinas"},
 		{username: "pimpinan-utama", role: "pimpinan", name: "Kepala Dinas", nik: "1234567890123456", signature: "c2lnbmF0dXJl"},
 	} {
-		_, err := fx.pool.Exec(ctx, `INSERT INTO users (username,password_hash,role,name,unit_id,nik,signature_image_base64) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''))`, user.username, hash("sandi"), user.role, user.name, user.unit, user.nik, user.signature)
+		_, err := fx.pool.Exec(ctx, `INSERT INTO users (username,password_hash,role,name,unit_id,nik,signature_image_base64,employee_number,job_title) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),'196711271995121002','Pembina Utama Muda')`, user.username, hash("sandi"), user.role, user.name, user.unit, user.nik, user.signature)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -220,6 +220,19 @@ func submitPDF(t *testing.T, client *http.Client, base, csrf, date string) (*htt
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	_ = writer.WriteField("proposed_tmt", date)
+	_ = writer.WriteField("birth_place", "Grobogan")
+	_ = writer.WriteField("birth_date", "1980-01-01")
+	_ = writer.WriteField("karpeg", "I 123456")
+	_ = writer.WriteField("pangkat", "Penata Muda Tingkat I")
+	_ = writer.WriteField("jabatan", "Guru Ahli Pertama")
+	_ = writer.WriteField("last_sk_pejabat", "Kepala Dinas Pendidikan")
+	_ = writer.WriteField("last_sk_tanggal", "2024-04-01")
+	_ = writer.WriteField("last_sk_nomor", "800/010/4.2/2024")
+	_ = writer.WriteField("last_sk_tmt", "2024-04-01")
+	_ = writer.WriteField("mkg_lama_tahun", "10")
+	_ = writer.WriteField("mkg_lama_bulan", "0")
+	_ = writer.WriteField("mkg_baru_tahun", "12")
+	_ = writer.WriteField("mkg_baru_bulan", "0")
 	part, err := writer.CreateFormFile("file", "dukungan.pdf")
 	if err != nil {
 		t.Fatal(err)
@@ -317,6 +330,45 @@ func postJSON(t *testing.T, client *http.Client, url, csrf, body string) *http.R
 }
 
 func itoa(v int64) string { return fmt.Sprintf("%d", v) }
+
+func TestSubmitTanpaKarpegDitolak(t *testing.T) {
+	fx := newFixture(t)
+	client, csrf := loginClient(t, fx.srv.URL, nipPNS, nipPNS)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("proposed_tmt", "2026-09-01")
+	_ = writer.WriteField("birth_place", "Grobogan")
+	_ = writer.WriteField("birth_date", "1980-01-01")
+	_ = writer.WriteField("pangkat", "Penata")
+	_ = writer.WriteField("jabatan", "Guru")
+	_ = writer.WriteField("last_sk_pejabat", "Kepala Dinas")
+	_ = writer.WriteField("last_sk_tanggal", "2024-04-01")
+	_ = writer.WriteField("last_sk_nomor", "800/010/4.2/2024")
+	_ = writer.WriteField("last_sk_tmt", "2024-04-01")
+	part, err := writer.CreateFormFile("file", "dukungan.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte("%PDF-1.4\n% test\n"))
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, fx.srv.URL+"/api/v1/submissions", &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-CSRF-Token", csrf)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d, ingin 422", resp.StatusCode)
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

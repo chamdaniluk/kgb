@@ -43,6 +43,9 @@ func BeginIssue(ctx context.Context, pool *pgxpool.Pool, submissionID int64) (Is
 	if submission.Status != "menunggu_tte" {
 		return fail(ErrConflict)
 	}
+	if err := ValidateSubmissionDraft(submission); err != nil {
+		return fail(err)
+	}
 	var activeToken *string
 	var activeExpiry *time.Time
 	if err := tx.QueryRow(ctx, `SELECT tte_lock_token, tte_lock_expires_at FROM submissions WHERE id=$1`, submissionID).Scan(&activeToken, &activeExpiry); err != nil {
@@ -124,7 +127,7 @@ func CommitIssue(ctx context.Context, pool *pgxpool.Pool, issue IssueContext, si
 	if issue.Submission.ProposedMasaKerjaTahun != nil {
 		masaKerja = *issue.Submission.ProposedMasaKerjaTahun
 	}
-	if err := UpdateTeacherAfterIssue(ctx, tx, issue.Submission.TeacherID, issue.Submission.ProposedTMT, masaKerja); err != nil {
+	if err := UpdateTeacherAfterIssue(ctx, tx, issue.Submission.TeacherID, issue.Submission.ProposedTMT, masaKerja, issue.Submission.LetterDraftValues()); err != nil {
 		return err
 	}
 	change := TeacherChange{

@@ -15,6 +15,7 @@ import (
 
 	"sicendikia/internal/esign"
 	"sicendikia/internal/files"
+	"sicendikia/internal/letterdata"
 	"sicendikia/internal/pdf"
 	"sicendikia/internal/store"
 )
@@ -43,6 +44,8 @@ func mapStoreError(w http.ResponseWriter, err error) bool {
 		writeErr(w, http.StatusForbidden, "FORBIDDEN", "Data bukan dalam kewenangan Anda.")
 	case errors.Is(err, store.ErrConflict):
 		writeErr(w, http.StatusConflict, "INVALID_STATUS_TRANSITION", "Status pengajuan sudah berubah atau tidak sesuai.")
+	case errors.Is(err, letterdata.ErrDraftIncomplete):
+		writeErr(w, http.StatusUnprocessableEntity, "LETTER_DRAFT_INCOMPLETE", err.Error())
 	default:
 		return false
 	}
@@ -53,7 +56,7 @@ func formatTanggalID(t *time.Time) string {
 	if t == nil {
 		return ""
 	}
-	return t.Format("02 January 2006")
+	return pdf.FormatTanggalID(*t)
 }
 
 func (s *Server) teacherForUser(r *http.Request) (store.Teacher, bool) {
@@ -134,6 +137,148 @@ func parseOptionalFormInt64(raw string) (*int64, error) {
 		return nil, errors.New("unit tujuan tidak valid")
 	}
 	return &value, nil
+}
+
+func parseOptionalDashDate(raw string) (*time.Time, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "-" {
+		return nil, raw == "-", nil
+	}
+	value, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		return nil, false, errors.New("tanggal perpanjangan perjanjian tidak valid")
+	}
+	return &value, false, nil
+}
+
+func letterDraftFromForm(r *http.Request, teacher store.Teacher, masaKerja int) (store.LetterDraft, error) {
+	birthDate, err := parseOptionalFormDate(r.FormValue("birth_date"))
+	if err != nil {
+		return store.LetterDraft{}, errors.New("tanggal lahir tidak valid")
+	}
+	if birthDate == nil {
+		birthDate = teacher.BirthDate
+	}
+	lastSKTanggal, err := parseOptionalFormDate(r.FormValue("last_sk_tanggal"))
+	if err != nil {
+		return store.LetterDraft{}, errors.New("tanggal SK terakhir tidak valid")
+	}
+	if lastSKTanggal == nil {
+		lastSKTanggal = teacher.LastSKTanggal
+	}
+	lastSKTMT, err := parseOptionalFormDate(r.FormValue("last_sk_tmt"))
+	if err != nil {
+		return store.LetterDraft{}, errors.New("TMT SK terakhir tidak valid")
+	}
+	if lastSKTMT == nil {
+		lastSKTMT = teacher.LastSKTMTBerlaku
+	}
+	mkgLamaTahun, err := parseOptionalFormInt(r.FormValue("mkg_lama_tahun"))
+	if err != nil {
+		return store.LetterDraft{}, errors.New("masa kerja lama tidak valid")
+	}
+	if mkgLamaTahun == nil && teacher.LastSKMasaKerjaTahun != nil {
+		mkgLamaTahun = teacher.LastSKMasaKerjaTahun
+	}
+	if mkgLamaTahun == nil {
+		v := masaKerja - 2
+		if v < 0 {
+			v = 0
+		}
+		mkgLamaTahun = &v
+	}
+	mkgLamaBulan, err := parseOptionalFormInt(r.FormValue("mkg_lama_bulan"))
+	if err != nil {
+		return store.LetterDraft{}, errors.New("bulan masa kerja lama tidak valid")
+	}
+	if mkgLamaBulan == nil && teacher.LastSKMasaKerjaBulan != nil {
+		mkgLamaBulan = teacher.LastSKMasaKerjaBulan
+	}
+	if mkgLamaBulan == nil {
+		zero := 0
+		mkgLamaBulan = &zero
+	}
+	mkgBaruTahun, err := parseOptionalFormInt(r.FormValue("mkg_baru_tahun"))
+	if err != nil {
+		return store.LetterDraft{}, errors.New("masa kerja baru tidak valid")
+	}
+	if mkgBaruTahun == nil {
+		v := masaKerja
+		mkgBaruTahun = &v
+	}
+	mkgBaruBulan, err := parseOptionalFormInt(r.FormValue("mkg_baru_bulan"))
+	if err != nil {
+		return store.LetterDraft{}, errors.New("bulan masa kerja baru tidak valid")
+	}
+	if mkgBaruBulan == nil {
+		zero := 0
+		mkgBaruBulan = &zero
+	}
+	perpanjangan, _, err := parseOptionalDashDate(r.FormValue("perpanjangan_perjanjian_kerja"))
+	if err != nil {
+		return store.LetterDraft{}, err
+	}
+	orDefault := func(raw, fallback string) string {
+		raw = strings.TrimSpace(raw)
+		if raw != "" {
+			return raw
+		}
+		return fallback
+	}
+	return store.LetterDraft{
+		BirthPlace:     orDefault(r.FormValue("birth_place"), teacher.BirthPlace),
+		BirthDate:      birthDate,
+		Karpeg:         orDefault(r.FormValue("karpeg"), teacher.Karpeg),
+		Pangkat:        orDefault(r.FormValue("pangkat"), teacher.Pangkat),
+		Jabatan:        orDefault(r.FormValue("jabatan"), teacher.Jabatan),
+		LastSKPejabat:  orDefault(r.FormValue("last_sk_pejabat"), teacher.LastSKPejabat),
+		LastSKTanggal:  lastSKTanggal,
+		LastSKNomor:    orDefault(r.FormValue("last_sk_nomor"), teacher.LastSKNomor),
+		LastSKTMT:      lastSKTMT,
+		MKGLamaTahun:   mkgLamaTahun,
+		MKGLamaBulan:   mkgLamaBulan,
+		MKGBaruTahun:   mkgBaruTahun,
+		MKGBaruBulan:   mkgBaruBulan,
+		MasaPerjanjian: strings.TrimSpace(r.FormValue("masa_perjanjian_kerja")),
+		Perpanjangan:   perpanjangan,
+	}, nil
+}
+
+func validateDraftFor(teacher store.Teacher, draft store.LetterDraft, proposedTMT time.Time, current, next string) error {
+	input := letterdata.Draft{
+		ASNType:        teacher.ASNType,
+		BirthPlace:     draft.BirthPlace,
+		Karpeg:         draft.Karpeg,
+		Pangkat:        draft.Pangkat,
+		PangkatGol:     teacher.PangkatGol,
+		Jabatan:        draft.Jabatan,
+		BirthDate:      draft.BirthDate,
+		LastSKPejabat:  draft.LastSKPejabat,
+		LastSKNomor:    draft.LastSKNomor,
+		LastSKTanggal:  draft.LastSKTanggal,
+		LastSKTMT:      draft.LastSKTMT,
+		MKGLamaTahun:   derefIntPtr(draft.MKGLamaTahun),
+		MKGLamaBulan:   derefIntPtr(draft.MKGLamaBulan),
+		MKGBaruTahun:   derefIntPtr(draft.MKGBaruTahun),
+		MKGBaruBulan:   derefIntPtr(draft.MKGBaruBulan),
+		ProposedTMT:    proposedTMT,
+		CurrentSalary:  current,
+		NextSalary:     next,
+		UnitName:       teacher.UnitName,
+		MasaPerjanjian: draft.MasaPerjanjian,
+		Perpanjangan:   draft.Perpanjangan,
+	}
+	if teacher.ASNType == "pppk" && letterdata.Normalize(draft.MasaPerjanjian) != "" && draft.Perpanjangan == nil {
+		input.PerpanjanganDash = true
+	}
+	return letterdata.ValidateDraft(input)
+}
+
+func derefIntPtr(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 // ProposedTeacherChangeInput adalah field perubahan kepegawaian yang boleh
@@ -402,8 +547,19 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusInternalServerError, "FILE_SAVE_FAILED", "Berkas gagal disimpan.")
 		return
 	}
+	draft, err := letterDraftFromForm(r, t, masaKerja)
+	if err != nil {
+		_ = s.Files.Remove(path)
+		writeErr(w, http.StatusUnprocessableEntity, "LETTER_DRAFT_INCOMPLETE", err.Error())
+		return
+	}
+	if err := validateDraftFor(t, draft, proposedTMT, current, next); err != nil {
+		_ = s.Files.Remove(path)
+		writeErr(w, http.StatusUnprocessableEntity, "LETTER_DRAFT_INCOMPLETE", err.Error())
+		return
+	}
 	effectiveMasaKerja := masaKerja
-	sub, err := store.CreateSubmission(r.Context(), s.Pool, t.ID, userFrom(r).ID, proposedTMT, &effectiveMasaKerja, tmtKGBLast, change, current, next, files.OriginalName(header.Filename), path, size, clientIP(r))
+	sub, err := store.CreateSubmission(r.Context(), s.Pool, t.ID, userFrom(r).ID, proposedTMT, &effectiveMasaKerja, tmtKGBLast, change, draft, current, next, files.OriginalName(header.Filename), path, size, clientIP(r))
 	if err != nil {
 		_ = s.Files.Remove(path)
 		if mapStoreError(w, err) {
@@ -483,8 +639,19 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, "FILE_INVALID", "Berkas harus PDF dan maksimal 5MB.")
 		return
 	}
+	draft, err := letterDraftFromForm(r, t, masaKerja)
+	if err != nil {
+		_ = s.Files.Remove(path)
+		writeErr(w, http.StatusUnprocessableEntity, "LETTER_DRAFT_INCOMPLETE", err.Error())
+		return
+	}
+	if err := validateDraftFor(t, draft, proposedTMT, current, next); err != nil {
+		_ = s.Files.Remove(path)
+		writeErr(w, http.StatusUnprocessableEntity, "LETTER_DRAFT_INCOMPLETE", err.Error())
+		return
+	}
 	effectiveMasaKerja := masaKerja
-	sub, err := store.Resubmit(r.Context(), s.Pool, id, userFrom(r).ID, proposedTMT, &effectiveMasaKerja, tmtKGBLast, change, current, next, filepath.Base(header.Filename), path, size, clientIP(r))
+	sub, err := store.Resubmit(r.Context(), s.Pool, id, userFrom(r).ID, proposedTMT, &effectiveMasaKerja, tmtKGBLast, change, draft, current, next, filepath.Base(header.Filename), path, size, clientIP(r))
 	if err != nil {
 		_ = s.Files.Remove(path)
 		if mapStoreError(w, err) {
@@ -672,6 +839,10 @@ func (s *Server) handleSignLetter(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "SIGNER_NOT_CONFIGURED", "NIK dan spesimen TTD pimpinan belum dikonfigurasi.")
 		return
 	}
+	if signer.EmployeeNumber == nil || strings.TrimSpace(*signer.EmployeeNumber) == "" {
+		writeErr(w, http.StatusServiceUnavailable, "SIGNER_NOT_CONFIGURED", "NIP pimpinan untuk blok tanda tangan belum dikonfigurasi.")
+		return
+	}
 	issue, err := store.BeginIssue(r.Context(), s.Pool, submissionID)
 	if err != nil {
 		if mapStoreError(w, err) {
@@ -683,55 +854,47 @@ func (s *Server) handleSignLetter(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		_ = store.ReleaseIssue(context.Background(), s.Pool, submissionID, issue.LockToken)
 	}()
+	draft := issue.Submission.LetterDraftValues()
+	signerJob := ""
+	if signer.JobTitle != nil {
+		signerJob = *signer.JobTitle
+	}
+	perpanjangan := "-"
+	if draft.Perpanjangan != nil {
+		perpanjangan = pdf.FormatTanggalID(*draft.Perpanjangan)
+	}
 	ld := pdf.LetterData{
-		Number:        issue.Number,
-		TanggalNaskah: pdf.TodayID(),
-		IssuedAt:      pdf.TodayID(),
-		ASNType:       issue.Submission.ASNType,
-		TeacherName:   issue.Submission.TeacherName,
-		NIP:           issue.Submission.NIP,
-		Karpeg:        issue.Submission.SnapshotKarpeg,
-		BirthPlace:    issue.Submission.SnapshotBirthPlace,
-		BirthDate:     formatTanggalID(issue.Submission.SnapshotBirthDate),
-		Pangkat:       issue.Submission.Pangkat,
-		PangkatGol:    issue.Submission.PangkatGol,
-		Jabatan:       issue.Submission.Jabatan,
-		UnitName:      issue.Submission.UnitName,
-		CurrentSalary: issue.Submission.CurrentSalary,
-		NextSalary:    issue.Submission.NextSalary,
-		MasaKerjaLamaTahun: func() int {
-			if v := issue.Submission.SnapshotLastSKMasaTahun; v != nil {
-				return *v
-			}
-			return issue.Submission.MasaKerjaTahun - 2
-		}(),
-		MasaKerjaLamaBulan: func() int {
-			if v := issue.Submission.SnapshotLastSKMasaBulan; v != nil {
-				return *v
-			}
-			return 0
-		}(),
-		MasaKerjaBaruTahun: func() int {
-			if v := issue.Submission.ProposedMasaKerjaTahun; v != nil {
-				return *v
-			}
-			return issue.Submission.MasaKerjaTahun
-		}(),
-		MasaKerjaBaruBulan: 0,
-		Golongan:           issue.Submission.PangkatGol,
-		ProposedTMT:        issue.Submission.ProposedTMT.Format("02-01-2006"),
-		NextKGBDate:        issue.Submission.ProposedTMT.AddDate(2, 0, 0).Format("02-01-2006"),
-		LastSKPejabat:      issue.Submission.SnapshotLastSKPejabat,
-		LastSKTanggal:      formatTanggalID(issue.Submission.SnapshotLastSKTanggal),
-		LastSKNomor:        issue.Submission.SnapshotLastSKNomor,
-		LastSKTMTBerlaku:   formatTanggalID(issue.Submission.SnapshotLastSKTMTBerlaku),
-		SignerName:         signer.Name,
-		SignerNIP: func() string {
-			if signer.NIK != nil {
-				return *signer.NIK
-			}
-			return ""
-		}(),
+		Number:              issue.Number,
+		TanggalNaskah:       pdf.TodayID(),
+		IssuedAt:            pdf.TodayID(),
+		ASNType:             issue.Submission.ASNType,
+		TeacherName:         issue.Submission.TeacherName,
+		NIP:                 issue.Submission.NIP,
+		Karpeg:              draft.Karpeg,
+		BirthPlace:          draft.BirthPlace,
+		BirthDate:           formatTanggalID(draft.BirthDate),
+		Pangkat:             draft.Pangkat,
+		PangkatGol:          issue.Submission.PangkatGol,
+		Jabatan:             draft.Jabatan,
+		UnitName:            issue.Submission.UnitName,
+		CurrentSalary:       issue.Submission.CurrentSalary,
+		NextSalary:          issue.Submission.NextSalary,
+		MasaKerjaLamaTahun:  derefIntPtr(draft.MKGLamaTahun),
+		MasaKerjaLamaBulan:  derefIntPtr(draft.MKGLamaBulan),
+		MasaKerjaBaruTahun:  derefIntPtr(draft.MKGBaruTahun),
+		MasaKerjaBaruBulan:  derefIntPtr(draft.MKGBaruBulan),
+		Golongan:            issue.Submission.PangkatGol,
+		ProposedTMT:         pdf.FormatTanggalID(issue.Submission.ProposedTMT),
+		NextKGBDate:         pdf.FormatTanggalID(issue.Submission.ProposedTMT.AddDate(2, 0, 0)),
+		LastSKPejabat:       draft.LastSKPejabat,
+		LastSKTanggal:       formatTanggalID(draft.LastSKTanggal),
+		LastSKNomor:         draft.LastSKNomor,
+		LastSKTMTBerlaku:    formatTanggalID(draft.LastSKTMT),
+		MasaPerjanjian:      draft.MasaPerjanjian,
+		PerpanjanganKontrak: perpanjangan,
+		SignerName:          signer.Name,
+		SignerNIP:           strings.TrimSpace(*signer.EmployeeNumber),
+		SignerJob:           signerJob,
 	}
 	letterPDF, err := pdf.RenderLetter(r.Context(), s.Renderer, ld)
 	if err != nil {

@@ -144,8 +144,25 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		}
 		me := map[string]any{
 			"nip": t.NIP, "asn_type": t.ASNType, "unit": t.UnitName,
-			"pangkat_gol": t.PangkatGol, "masa_kerja_tahun": t.MasaKerjaTahun,
-			"masa_kerja_source": t.MasaKerjaSource,
+			"pangkat_gol": t.PangkatGol, "pangkat": t.Pangkat, "jabatan": t.Jabatan,
+			"masa_kerja_tahun": t.MasaKerjaTahun, "masa_kerja_source": t.MasaKerjaSource,
+			"birth_place": t.BirthPlace, "karpeg": t.Karpeg,
+			"last_sk_pejabat": t.LastSKPejabat, "last_sk_nomor": t.LastSKNomor,
+		}
+		if t.BirthDate != nil {
+			me["birth_date"] = t.BirthDate.Format("2006-01-02")
+		}
+		if t.LastSKTanggal != nil {
+			me["last_sk_tanggal"] = t.LastSKTanggal.Format("2006-01-02")
+		}
+		if t.LastSKTMTBerlaku != nil {
+			me["last_sk_tmt"] = t.LastSKTMTBerlaku.Format("2006-01-02")
+		}
+		if t.LastSKMasaKerjaTahun != nil {
+			me["mkg_lama_tahun"] = *t.LastSKMasaKerjaTahun
+		}
+		if t.LastSKMasaKerjaBulan != nil {
+			me["mkg_lama_bulan"] = *t.LastSKMasaKerjaBulan
 		}
 		gol := t.PangkatGol
 		if t.ASNType == "pppk" {

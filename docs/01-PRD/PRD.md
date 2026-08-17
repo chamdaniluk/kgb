@@ -77,7 +77,7 @@ Sistem e-KGB live (`kgb.grobogankab.web.id`) berfungsi sebagai referensi domain,
 - F-13 Setiap aksi verifikasi tercatat: siapa, kapan, keputusan, catatan.
 
 ### 5.4 TTE & Penerbitan
-- F-14 Konsep surat/SK KGB dibuat otomatis dari data pengajuan yang disetujui, mengikuti template e-KGB (kop Dinas Pendidikan Grobogan; isi memuat nama, NIP, unit kerja, TMT, gaji lama → gaji baru; blok tanda tangan Kepala Dinas; footer keaslian dokumen).
+- F-14 Konsep surat/SK KGB dibuat dengan **mengisi template DOCX dinas** (PNS surat pemberitahuan, PPPK keputusan). Sistem hanya mengganti field naskah; layout Word tidak dibuat ulang. Form usulan menampilkan seluruh isi yang akan tercetak. Naskah yang masih kosong ditolak di submit, verifikasi, dan TTE.
 - F-15 Pimpinan melakukan TTE melalui **layanan eSign Kominfo (BSrE/BSSN)** — API resmi "Esign Client Service for User 2.2.2" (dokumentasi & contoh dari Kominfo tersimpan di `local/esign-kominfo/`). Mode tanda tangan **VISIBLE** (spesimen gambar TTD pimpinan) pada halaman konsep; identifikasi via **NIK + passphrase** pimpinan (passphrase diinput pimpinan tiap menandatangani, tidak disimpan).
 - F-16 Setelah TTE, surat final berformat PDF diterbitkan dengan **nomor otomatis yang dihasilkan dari template nomor surat**; template tersebut dapat diisi/diatur oleh Dinas (mis. pola nomor urut, kode, tahun).
 - F-17 Surat final tidak dapat diubah (immutable); unduhan dicatat.

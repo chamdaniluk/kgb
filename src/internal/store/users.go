@@ -25,12 +25,15 @@ type User struct {
 	IsActive             bool
 	NIK                  *string
 	SignatureImageBase64 *string
+	EmployeeNumber       *string
+	JobTitle             *string
 }
 
 func scanUser(row pgxRow) (User, error) {
 	var u User
 	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Name,
-		&u.UnitID, &u.UnitName, &u.UnitType, &u.UnitParentID, &u.IsActive, &u.NIK, &u.SignatureImageBase64)
+		&u.UnitID, &u.UnitName, &u.UnitType, &u.UnitParentID, &u.IsActive, &u.NIK, &u.SignatureImageBase64,
+		&u.EmployeeNumber, &u.JobTitle)
 	return u, err
 }
 
@@ -40,7 +43,7 @@ type pgxRow interface {
 }
 
 const userCols = `u.id, u.username, u.password_hash, u.role, u.name, u.unit_id, un.name, un.type, un.parent_id, u.is_active,
-       u.nik, u.signature_image_base64
+       u.nik, u.signature_image_base64, u.employee_number, u.job_title
 FROM users u LEFT JOIN units un ON un.id = u.unit_id`
 
 func GetUserByUsername(ctx context.Context, pool *pgxpool.Pool, username string) (User, error) {
