@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -63,9 +65,28 @@ func TestAlurLengkapPengajuanSampaiTerbit(t *testing.T) {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			var payload map[string]any
-			if err := json.Unmarshal(body, &payload); err != nil || payload["nik"] != "1234567890123456" || payload["passphrase"] != "passphrase-uji" {
+			var payload struct {
+				NIK        string   `json:"nik"`
+				Passphrase string   `json:"passphrase"`
+				Files      []string `json:"file"`
+				Properties []any    `json:"signatureProperties"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil || payload.NIK != "1234567890123456" || payload.Passphrase != "passphrase-uji" || len(payload.Files) != 1 || len(payload.Properties) != 1 {
 				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			concept, err := base64.StdEncoding.DecodeString(payload.Files[0])
+			if err != nil || !bytes.HasPrefix(concept, []byte("%PDF-")) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			// Mock signer mengembalikan kembali konsep SK yang diterima dengan
+			// marker TTE dummy agar artifact final dapat diverifikasi.
+			signed := append([]byte(nil), concept...)
+			signed = append(signed, []byte("\n% DUMMY-SIGNED-BY-MOCK\n")...)
+			if err := os.WriteFile("/tmp/si-cendikia-e2e-final-signed.pdf", signed, 0o600); err != nil {
+				t.Errorf("simpan artifact dummy: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -73,8 +94,13 @@ func TestAlurLengkapPengajuanSampaiTerbit(t *testing.T) {
 			return
 		}
 		if r.Method == http.MethodGet && r.URL.Path == "/api/sign/download/doc-uji-1" {
+			content, err := os.ReadFile("/tmp/si-cendikia-e2e-final-signed.pdf")
+			if err != nil || !bytes.HasPrefix(content, []byte("%PDF-")) {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
 			w.Header().Set("Content-Type", "application/pdf")
-			_, _ = io.WriteString(w, "%PDF-1.4\n% fake signed PDF\n")
+			_, _ = w.Write(content)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -133,6 +159,29 @@ func TestAlurLengkapPengajuanSampaiTerbit(t *testing.T) {
 	}
 	if !bytes.HasPrefix(content, []byte("%PDF-")) {
 		t.Fatalf("hasil unduh bukan PDF: %q", content[:min(len(content), 20)])
+	}
+	if !bytes.Contains(content, []byte("DUMMY-SIGNED-BY-MOCK")) {
+		t.Fatal("PDF final tidak memuat marker tanda tangan dummy")
+	}
+	if info, err := os.Stat("/tmp/si-cendikia-e2e-final-signed.pdf"); err != nil || info.Size() == 0 {
+		t.Fatalf("artifact PDF dummy tidak valid: info=%v err=%v", info, err)
+	}
+	if letter.TTEReceiptID != "doc-uji-1" {
+		t.Fatalf("receipt surat = %q, want doc-uji-1", letter.TTEReceiptID)
+	}
+	audit, err := store.AuditForSubmission(ctx, fx.pool, submissionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantActions := []string{"submit", "setuju_unit", "setuju_dinas", "tte", "terbit"}
+	seen := make(map[string]bool, len(audit))
+	for _, item := range audit {
+		seen[item.Action] = true
+	}
+	for _, action := range wantActions {
+		if !seen[action] {
+			t.Errorf("audit action %q tidak ditemukan; audit=%v", action, seen)
+		}
 	}
 	if count, err := store.CountAudit(ctx, fx.pool, "terbit"); err != nil || count != 1 {
 		t.Fatalf("audit terbit count=%d err=%v", count, err)
