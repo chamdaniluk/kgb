@@ -76,3 +76,31 @@ func TestIsPeriodicTMT(t *testing.T) {
 		t.Fatal("jarak 1 tahun tidak genap")
 	}
 }
+
+func TestNominationBucketJendelaEnamSampaiTigaBulan(t *testing.T) {
+	// TMT 1 Des 2026, hari ini 17 Agu 2026 ≈ 3,5 bulan → nominasi.
+	if got := NominationBucket(d("2026-12-01"), d("2026-08-17")); got != BucketNominasi {
+		t.Fatalf("bucket = %s, ingin nominasi", got)
+	}
+}
+
+func TestNominationBucketTigaBulanTerakhir(t *testing.T) {
+	if got := NominationBucket(d("2026-12-01"), d("2026-10-01")); got != BucketSegera {
+		t.Fatalf("bucket = %s, ingin segera", got)
+	}
+}
+
+func TestNominationBucketTerlambatTetapBisaUsul(t *testing.T) {
+	if got := NominationBucket(d("2026-06-01"), d("2026-08-17")); got != BucketTerlambat {
+		t.Fatalf("bucket = %s, ingin terlambat", got)
+	}
+}
+
+func TestNominationBucketMendatangDanKosong(t *testing.T) {
+	if got := NominationBucket(d("2028-12-01"), d("2026-08-17")); got != BucketMendatang {
+		t.Fatalf("bucket = %s, ingin mendatang", got)
+	}
+	if got := NominationBucket(time.Time{}, d("2026-08-17")); got != BucketBelumLengkap {
+		t.Fatalf("bucket kosong = %s", got)
+	}
+}

@@ -93,3 +93,32 @@ func IsPeriodicTMT(last, proposed time.Time) bool {
 	}
 	return false
 }
+
+const (
+	BucketBelumLengkap = "belum_lengkap"
+	BucketMendatang    = "mendatang"
+	BucketNominasi     = "nominasi" // 6–3 bulan sebelum TMT
+	BucketSegera       = "segera"   // 3 bulan sampai TMT
+	BucketTerlambat    = "terlambat"
+)
+
+// NominationBucket mengelompokkan ASN berdasarkan jarak ke TMT KGB berikutnya.
+// Jendela nominasi: 6 sampai 3 bulan sebelum TMT. Tiga bulan terakhir untuk
+// usul perubahan gaji. Lewat TMT tetap bisa usul (terlambat).
+func NominationBucket(nextTMT, asOf time.Time) string {
+	if nextTMT.IsZero() {
+		return BucketBelumLengkap
+	}
+	nextTMT = dateOnly(nextTMT)
+	asOf = dateOnly(asOf)
+	if nextTMT.Before(asOf) {
+		return BucketTerlambat
+	}
+	if !nextTMT.After(asOf.AddDate(0, 3, 0)) {
+		return BucketSegera
+	}
+	if !nextTMT.After(asOf.AddDate(0, 6, 0)) {
+		return BucketNominasi
+	}
+	return BucketMendatang
+}
