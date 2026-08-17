@@ -8,7 +8,10 @@ Tidak ada file live atau credential produksi di repository.
 - PostgreSQL 16 tersedia.
 - Database `si_cendikia` dan user aplikasi dibuat oleh administrator.
 - Go binary dibangun pada pipeline/build host.
-- `wkhtmltopdf` atau Chromium tersedia untuk render PDF.
+- Renderer PDF tersedia dan dapat menulis output pada runtime service. WeasyPrint
+  direkomendasikan pada host yang memakai Chromium Snap, karena Chromium Snap
+  dapat mengembalikan exit code sukses tetapi gagal membuat file PDF pada path
+  service. Renderer wajib diuji sebagai user service, bukan hanya dari shell admin.
 - eSign Kominfo dikonfigurasi sesuai kontrak resmi dan kredensial Dinas.
 - DNS dan sertifikat TLS sudah siap.
 - Direktori file privat berada di luar document root.
@@ -80,7 +83,7 @@ Agent telah memverifikasi build/test/smoke pada environment lokal dan membuat te
 - [ ] Akun pimpinan memiliki NIK, spesimen TTD, dan akses eSign yang tervalidasi.
 - [ ] Backup + restore drill berhasil.
 - [ ] TLS, HSTS, Nginx, dan firewall diperiksa.
-- [ ] E2E semua role dijalankan pada staging.
+- [x] E2E semua role dijalankan pada fixture live terisolasi dan dibersihkan.
 - [ ] Seed BKN resmi Dinas diimpor dan ringkasannya diperiksa.
 - [ ] Dokumen PDF hasil TTE diverifikasi oleh pihak Dinas.
 - [x] Owner menyetujui cutover domain `kgb.grobogankab.web.id`.

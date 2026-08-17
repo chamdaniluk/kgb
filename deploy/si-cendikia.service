@@ -14,7 +14,7 @@ RestartSec=5s
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
+ProtectHome=read-only
 ReadWritePaths=/var/lib/si-cendikia
 EnvironmentFile=/etc/si-cendikia/si-cendikia.env
 

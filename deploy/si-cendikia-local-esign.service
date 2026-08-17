@@ -1,0 +1,23 @@
+[Unit]
+Description=SI CENDIKIA local dummy eSign gateway
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/si-cendikia
+EnvironmentFile=/etc/si-cendikia/local-esign.env
+ExecStart=/usr/bin/python3 /opt/si-cendikia/local_esign_gateway.py --listen 127.0.0.1:19090 --store /var/lib/si-cendikia/local-esign
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/var/lib/si-cendikia
+
+[Install]
+WantedBy=multi-user.target

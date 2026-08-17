@@ -109,3 +109,9 @@ legacy/
 # ---------- Data lokal (JANGAN di-commit) ----------
 # Daftar akun petugas berisi password polos; hanya hidup di local/.
 local/
+
+# E2E artifacts and temporary live-test state
+artifacts/*.pdf
+artifacts/*.tmp
+/tmp/
+*.credentials.json
