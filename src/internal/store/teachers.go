@@ -21,18 +21,23 @@ type Teacher struct {
 	UnitID          int64      `json:"unit_id"`
 	UnitName        string     `json:"unit_name"`
 	PangkatGol      string     `json:"pangkat_gol"`
+	Pangkat         string     `json:"pangkat,omitempty"`
+	Jabatan         string     `json:"jabatan,omitempty"`
+	BirthDate       *time.Time `json:"birth_date,omitempty"`
 	MasaKerjaTahun  int        `json:"masa_kerja_tahun"`
 	MasaKerjaSource string     `json:"masa_kerja_source,omitempty"`
 	TMTKGBLast      *time.Time `json:"tmt_kgb_last,omitempty"`
 }
 
 const teacherCols = `t.id, t.user_id, t.nip, t.name, t.asn_type,
-       t.unit_id, un.name, t.pangkat_gol, t.masa_kerja_tahun, COALESCE(t.masa_kerja_source,''), t.tmt_kgb_last`
+       t.unit_id, un.name, t.pangkat_gol, COALESCE(t.pangkat,''), COALESCE(t.jabatan,''), t.birth_date,
+       t.masa_kerja_tahun, COALESCE(t.masa_kerja_source,''), t.tmt_kgb_last`
 
 func scanTeacher(row pgx.Row) (Teacher, error) {
 	var t Teacher
 	err := row.Scan(&t.ID, &t.UserID, &t.NIP, &t.Name, &t.ASNType,
-		&t.UnitID, &t.UnitName, &t.PangkatGol, &t.MasaKerjaTahun, &t.MasaKerjaSource, &t.TMTKGBLast)
+		&t.UnitID, &t.UnitName, &t.PangkatGol, &t.Pangkat, &t.Jabatan, &t.BirthDate,
+		&t.MasaKerjaTahun, &t.MasaKerjaSource, &t.TMTKGBLast)
 	return t, err
 }
 
@@ -94,7 +99,7 @@ func ListTeachers(ctx context.Context, pool *pgxpool.Pool, q string, limit, offs
 }
 
 // UpsertImportedTeacher membuat atau memperbarui unit, akun ASN, dan guru.
-func UpsertImportedTeacher(ctx context.Context, tx pgx.Tx, t ImportedTeacher, passwordHash string) (created bool, err error) {
+func UpsertImportedTeacher(ctx context.Context, tx pgx.Tx, t ImportedTeacher, hashPassword func(string) (string, error)) (created bool, err error) {
 	var parentID any
 	if t.ParentUnitCode != "" {
 		if err = tx.QueryRow(ctx, `
@@ -120,24 +125,28 @@ func UpsertImportedTeacher(ctx context.Context, tx pgx.Tx, t ImportedTeacher, pa
 		return false, fmt.Errorf("cek username ASN: %w", roleErr)
 	}
 	var userID int64
-	err = tx.QueryRow(ctx, `
-		INSERT INTO users (username,password_hash,role,name,unit_id,is_active)
-		VALUES ($1,$2,'asn',$3,$4,true)
-		ON CONFLICT (username) DO UPDATE SET name=EXCLUDED.name, unit_id=EXCLUDED.unit_id, is_active=true, updated_at=now()
-		RETURNING id`, t.NIP, passwordHash, t.Name, unitID).Scan(&userID)
+	if errors.Is(roleErr, pgx.ErrNoRows) {
+		passwordHash, hashErr := hashPassword(t.NIP)
+		if hashErr != nil {
+			return false, fmt.Errorf("hash password ASN: %w", hashErr)
+		}
+		err = tx.QueryRow(ctx, `INSERT INTO users (username,password_hash,role,name,unit_id,is_active) VALUES ($1,$2,'asn',$3,$4,true) RETURNING id`, t.NIP, passwordHash, t.Name, unitID).Scan(&userID)
+	} else {
+		err = tx.QueryRow(ctx, `UPDATE users SET name=$1, unit_id=$2, is_active=true, updated_at=now() WHERE username=$3 AND role='asn' RETURNING id`, t.Name, unitID, t.NIP).Scan(&userID)
+	}
 	if err != nil {
 		return false, fmt.Errorf("upsert user ASN: %w", err)
 	}
 	var existingID int64
 	err = tx.QueryRow(ctx, `SELECT id FROM teachers WHERE nip=$1`, t.NIP).Scan(&existingID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_, err = tx.Exec(ctx, `INSERT INTO teachers (user_id,nip,name,asn_type,unit_id,pangkat_gol,masa_kerja_tahun,masa_kerja_source,tmt_kgb_last) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, userID, t.NIP, t.Name, t.ASNType, unitID, t.PangkatGol, t.MasaKerjaTahun, t.MasaKerjaSource, t.TMTKGBLast)
+		_, err = tx.Exec(ctx, `INSERT INTO teachers (user_id,nip,name,asn_type,unit_id,pangkat_gol,pangkat,jabatan,birth_date,masa_kerja_tahun,masa_kerja_source,tmt_kgb_last) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, userID, t.NIP, t.Name, t.ASNType, unitID, t.PangkatGol, t.Pangkat, t.Jabatan, t.BirthDate, t.MasaKerjaTahun, t.MasaKerjaSource, t.TMTKGBLast)
 		return true, err
 	}
 	if err != nil {
 		return false, err
 	}
-	_, err = tx.Exec(ctx, `UPDATE teachers SET user_id=$1,name=$2,asn_type=$3,unit_id=$4,pangkat_gol=$5,masa_kerja_tahun=$6,masa_kerja_source=$7,tmt_kgb_last=$8,updated_at=now() WHERE id=$9`, userID, t.Name, t.ASNType, unitID, t.PangkatGol, t.MasaKerjaTahun, t.MasaKerjaSource, t.TMTKGBLast, existingID)
+	_, err = tx.Exec(ctx, `UPDATE teachers SET user_id=$1,name=$2,asn_type=$3,unit_id=$4,pangkat_gol=$5,pangkat=$6,jabatan=$7,birth_date=$8,masa_kerja_tahun=$9,masa_kerja_source=$10,tmt_kgb_last=$11,updated_at=now() WHERE id=$12`, userID, t.Name, t.ASNType, unitID, t.PangkatGol, t.Pangkat, t.Jabatan, t.BirthDate, t.MasaKerjaTahun, t.MasaKerjaSource, t.TMTKGBLast, existingID)
 	return false, err
 }
 
@@ -197,6 +206,20 @@ func UpdateTeacherAfterIssue(ctx context.Context, tx pgx.Tx, teacherID int64, pr
 		return errors.New("masa kerja snapshot tidak boleh negatif")
 	}
 	_, err := tx.Exec(ctx, `UPDATE teachers SET tmt_kgb_last=$1, masa_kerja_tahun=$2+2, masa_kerja_source='kgb_terbit', updated_at=now() WHERE id=$3`, proposedTMT, proposedMasaKerja, teacherID)
+	return err
+}
+
+// ApplyTeacherChangeAtIssue menerapkan snapshot perubahan yang sudah melewati
+// verifikasi dan TTE. NIP, nama, dan birth_date tidak pernah disentuh.
+func ApplyTeacherChangeAtIssue(ctx context.Context, tx pgx.Tx, teacherID int64, change TeacherChange) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE teachers SET
+			pangkat_gol=COALESCE($1,pangkat_gol),
+			pangkat=COALESCE($2,pangkat),
+			jabatan=COALESCE($3,jabatan),
+			unit_id=COALESCE($4,unit_id),
+			updated_at=now()
+		WHERE id=$5`, change.PangkatGol, change.Pangkat, change.Jabatan, change.UnitID, teacherID)
 	return err
 }
 

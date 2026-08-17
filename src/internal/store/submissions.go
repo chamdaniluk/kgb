@@ -15,15 +15,22 @@ import (
 const submissionSelect = `
 SELECT s.id, s.teacher_id, s.status, s.proposed_tmt,
        s.proposed_masa_kerja_tahun, s.proposed_tmt_kgb_last,
+       s.proposed_pangkat_gol, s.proposed_pangkat, s.proposed_jabatan,
+       s.proposed_unit_id, COALESCE(pu.name, ''), s.proposed_effective_date,
+       COALESCE(s.proposed_change_note, ''),
        COALESCE(s.current_salary::text, ''), COALESCE(s.next_salary::text, ''),
        COALESCE(s.file_name, ''), COALESCE(s.file_path, ''), COALESCE(s.file_size, 0),
        COALESCE(s.rejection_note, ''), s.submitted_at, s.created_at, s.updated_at,
-       t.name, t.nip, t.asn_type, t.pangkat_gol, t.masa_kerja_tahun,
-       t.unit_id, un.name,
+       COALESCE(s.snapshot_name, t.name), COALESCE(s.snapshot_nip, t.nip),
+       COALESCE(s.snapshot_asn_type, t.asn_type), COALESCE(s.snapshot_pangkat_gol, t.pangkat_gol),
+       COALESCE(s.snapshot_pangkat, COALESCE(t.pangkat, '')), COALESCE(s.snapshot_jabatan, COALESCE(t.jabatan, '')),
+       COALESCE(s.snapshot_masa_kerja_tahun, t.masa_kerja_tahun), COALESCE(s.snapshot_unit_id, t.unit_id),
+       COALESCE(s.snapshot_unit_name, un.name),
        l.id, l.number, l.issued_at, l.tte_receipt_id
 FROM submissions s
 JOIN teachers t ON t.id = s.teacher_id
 JOIN units un ON un.id = t.unit_id
+LEFT JOIN units pu ON pu.id = s.proposed_unit_id
 LEFT JOIN letters l ON l.submission_id = s.id`
 
 func scanSubmission(row pgx.Row) (Submission, error) {
@@ -35,9 +42,11 @@ func scanSubmission(row pgx.Row) (Submission, error) {
 	err := row.Scan(
 		&s.ID, &s.TeacherID, &s.Status, &s.ProposedTMT,
 		&s.ProposedMasaKerjaTahun, &s.ProposedTMTKGBLast,
+		&s.ProposedPangkatGol, &s.ProposedPangkat, &s.ProposedJabatan,
+		&s.ProposedUnitID, &s.ProposedUnitName, &s.ProposedEffectiveDate, &s.ProposedChangeNote,
 		&s.CurrentSalary, &s.NextSalary, &s.FileName, &s.FilePath, &s.FileSize,
 		&s.RejectionNote, &s.SubmittedAt, &s.CreatedAt, &s.UpdatedAt,
-		&s.TeacherName, &s.NIP, &s.ASNType, &s.PangkatGol, &s.MasaKerjaTahun,
+		&s.TeacherName, &s.NIP, &s.ASNType, &s.PangkatGol, &s.Pangkat, &s.Jabatan, &s.MasaKerjaTahun,
 		&s.UnitID, &s.UnitName,
 		&letterID, &number, &issuedAt, &receipt,
 	)
@@ -95,11 +104,12 @@ func ListSubmissionsForTeacher(ctx context.Context, pool *pgxpool.Pool, teacherI
 func ListQueue(ctx context.Context, pool *pgxpool.Pool, role string, unitID *int64, status string) ([]Submission, error) {
 	query := submissionSelect + ` WHERE s.status = $1`
 	args := []any{status}
+	verificationUnit := "COALESCE(s.proposed_unit_id, s.snapshot_unit_id, t.unit_id)"
 	if role == "verifikator_unit" {
 		if unitID == nil {
 			return nil, ErrForbidden
 		}
-		query += ` AND (t.unit_id = $2 OR EXISTS (SELECT 1 FROM units scope JOIN units child ON child.parent_id=scope.id WHERE scope.id=$2 AND scope.type='korwil' AND child.id=t.unit_id AND child.type IN ('sd','tk')))`
+		query += ` AND (` + verificationUnit + ` = $2 OR EXISTS (SELECT 1 FROM units scope JOIN units child ON child.parent_id=scope.id WHERE scope.id=$2 AND scope.type='korwil' AND child.id=` + verificationUnit + ` AND child.type IN ('sd','tk')))`
 		args = append(args, *unitID)
 	}
 	query += ` ORDER BY s.submitted_at ASC NULLS LAST, s.id ASC`
@@ -120,7 +130,7 @@ func ListQueue(ctx context.Context, pool *pgxpool.Pool, role string, unitID *int
 }
 
 // CreateSubmission menyimpan pengajuan dan audit submit dalam satu transaksi.
-func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorID int64, proposedTMT time.Time, proposedMasaKerja *int, proposedTMTKGBLast *time.Time, currentSalary, nextSalary, fileName, filePath string, fileSize int64, ip string) (Submission, error) {
+func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorID int64, proposedTMT time.Time, proposedMasaKerja *int, proposedTMTKGBLast *time.Time, change TeacherChange, currentSalary, nextSalary, fileName, filePath string, fileSize int64, ip string) (Submission, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return Submission{}, err
@@ -128,9 +138,12 @@ func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorI
 	defer tx.Rollback(ctx)
 	var id int64
 	err = tx.QueryRow(ctx, `
-		INSERT INTO submissions (teacher_id, status, proposed_tmt, proposed_masa_kerja_tahun, proposed_tmt_kgb_last, current_salary, next_salary, file_name, file_path, file_size, submitted_at)
-		VALUES ($1, 'menunggu_unit', $2, $3, $4, $5, $6, $7, $8, $9, now()) RETURNING id`,
-		teacherID, proposedTMT, proposedMasaKerja, proposedTMTKGBLast, currentSalary, nextSalary, fileName, filePath, fileSize).Scan(&id)
+		INSERT INTO submissions (teacher_id, status, proposed_tmt, proposed_masa_kerja_tahun, proposed_tmt_kgb_last,
+			proposed_pangkat_gol, proposed_pangkat, proposed_jabatan, proposed_unit_id, proposed_effective_date, proposed_change_note,
+			current_salary, next_salary, file_name, file_path, file_size, submitted_at)
+		VALUES ($1, 'menunggu_unit', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now()) RETURNING id`,
+		teacherID, proposedTMT, proposedMasaKerja, proposedTMTKGBLast, change.PangkatGol, change.Pangkat, change.Jabatan,
+		change.UnitID, change.EffectiveDate, nullIfEmpty(change.Note), currentSalary, nextSalary, fileName, filePath, fileSize).Scan(&id)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -138,7 +151,22 @@ func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorI
 		}
 		return Submission{}, fmt.Errorf("insert pengajuan: %w", err)
 	}
-	details, _ := json.Marshal(map[string]any{"status": "menunggu_unit", "file_name": fileName, "file_size": fileSize})
+	if _, err := tx.Exec(ctx, `
+		UPDATE submissions s SET
+			snapshot_name=t.name, snapshot_nip=t.nip, snapshot_birth_date=t.birth_date,
+			snapshot_asn_type=t.asn_type, snapshot_pangkat_gol=t.pangkat_gol,
+			snapshot_pangkat=t.pangkat, snapshot_jabatan=t.jabatan,
+			snapshot_masa_kerja_tahun=t.masa_kerja_tahun,
+			snapshot_unit_id=t.unit_id, snapshot_unit_name=u.name
+		FROM teachers t JOIN units u ON u.id=t.unit_id
+		WHERE s.id=$1 AND t.id=s.teacher_id`, id); err != nil {
+		return Submission{}, fmt.Errorf("snapshot data BKN: %w", err)
+	}
+	detailsMap := map[string]any{"status": "menunggu_unit", "file_name": fileName, "file_size": fileSize}
+	if len(change.AuditDetails) > 0 {
+		detailsMap["perubahan_data"] = change.AuditDetails
+	}
+	details, _ := json.Marshal(detailsMap)
 	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs (actor_user_id, submission_id, action, details, ip) VALUES ($1, $2, 'submit', $3, $4)`, actorID, id, details, ip); err != nil {
 		return Submission{}, fmt.Errorf("audit submit: %w", err)
 	}
@@ -149,7 +177,7 @@ func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorI
 }
 
 // Resubmit mengubah pengajuan dikembalikan sesuai jenjang penolakan.
-func Resubmit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, proposedTMT time.Time, proposedMasaKerja *int, proposedTMTKGBLast *time.Time, currentSalary, nextSalary, fileName, filePath string, fileSize int64, ip string) (Submission, error) {
+func Resubmit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, proposedTMT time.Time, proposedMasaKerja *int, proposedTMTKGBLast *time.Time, change TeacherChange, currentSalary, nextSalary, fileName, filePath string, fileSize int64, ip string) (Submission, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return Submission{}, err
@@ -171,10 +199,29 @@ func Resubmit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, propos
 	default:
 		return Submission{}, ErrConflict
 	}
-	if _, err := tx.Exec(ctx, `UPDATE submissions SET status=$1, proposed_tmt=$2, proposed_masa_kerja_tahun=$3, proposed_tmt_kgb_last=$4, current_salary=$5, next_salary=$6, file_name=$7, file_path=$8, file_size=$9, rejection_note=NULL, submitted_at=now(), updated_at=now() WHERE id=$10`, newStatus, proposedTMT, proposedMasaKerja, proposedTMTKGBLast, currentSalary, nextSalary, fileName, filePath, fileSize, id); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE submissions SET status=$1, proposed_tmt=$2, proposed_masa_kerja_tahun=$3, proposed_tmt_kgb_last=$4,
+		proposed_pangkat_gol=$5, proposed_pangkat=$6, proposed_jabatan=$7, proposed_unit_id=$8, proposed_effective_date=$9, proposed_change_note=$10,
+		current_salary=$11, next_salary=$12, file_name=$13, file_path=$14, file_size=$15, rejection_note=NULL, submitted_at=now(), updated_at=now() WHERE id=$16`,
+		newStatus, proposedTMT, proposedMasaKerja, proposedTMTKGBLast, change.PangkatGol, change.Pangkat, change.Jabatan, change.UnitID, change.EffectiveDate,
+		nullIfEmpty(change.Note), currentSalary, nextSalary, fileName, filePath, fileSize, id); err != nil {
 		return Submission{}, err
 	}
-	details, _ := json.Marshal(map[string]any{"from": oldStatus, "to": newStatus, "file_name": fileName, "file_size": fileSize})
+	if _, err := tx.Exec(ctx, `
+		UPDATE submissions s SET
+			snapshot_name=t.name, snapshot_nip=t.nip, snapshot_birth_date=t.birth_date,
+			snapshot_asn_type=t.asn_type, snapshot_pangkat_gol=t.pangkat_gol,
+			snapshot_pangkat=t.pangkat, snapshot_jabatan=t.jabatan,
+			snapshot_masa_kerja_tahun=t.masa_kerja_tahun,
+			snapshot_unit_id=t.unit_id, snapshot_unit_name=u.name
+		FROM teachers t JOIN units u ON u.id=t.unit_id
+		WHERE s.id=$1 AND t.id=s.teacher_id`, id); err != nil {
+		return Submission{}, fmt.Errorf("snapshot data BKN saat submit ulang: %w", err)
+	}
+	detailsMap := map[string]any{"from": oldStatus, "to": newStatus, "file_name": fileName, "file_size": fileSize}
+	if len(change.AuditDetails) > 0 {
+		detailsMap["perubahan_data"] = change.AuditDetails
+	}
+	details, _ := json.Marshal(detailsMap)
 	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs (actor_user_id, submission_id, action, details, ip) VALUES ($1, $2, 'resubmit', $3, $4)`, actorID, id, details, ip); err != nil {
 		return Submission{}, err
 	}

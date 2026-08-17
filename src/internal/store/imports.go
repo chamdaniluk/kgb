@@ -24,11 +24,7 @@ func ImportTeachers(ctx context.Context, pool *pgxpool.Pool, actorID int64, file
 			result.Notes = append(result.Notes, fmt.Sprintf("baris %d: %v", i+2, err))
 			continue
 		}
-		hash, err := hashPassword(teacher.NIP)
-		if err != nil {
-			return ImportResult{}, fmt.Errorf("hash password baris %d: %w", i+2, err)
-		}
-		created, err := UpsertImportedTeacher(ctx, tx, teacher, hash)
+		created, err := UpsertImportedTeacher(ctx, tx, teacher, hashPassword)
 		if err != nil {
 			return ImportResult{}, fmt.Errorf("baris %d NIP %s: %w", i+2, teacher.NIP, err)
 		}

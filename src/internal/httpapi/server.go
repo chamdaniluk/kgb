@@ -103,6 +103,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/letters", s.withAuth("verifikator_dinas", "admin_dinas", "pimpinan", "admin")(s.handleListLetters))
 
 	mux.HandleFunc("GET /api/v1/public/stats", s.handlePublicStats)
+	mux.HandleFunc("GET /api/v1/units", s.withAuth()(s.handleAdminUnits))
 	mux.HandleFunc("POST /api/v1/admin/import-bkn", s.withAuth("admin", "admin_dinas")(s.handleImportBKN))
 	mux.HandleFunc("POST /api/v1/admin/import-users", s.withAuth("admin", "admin_dinas")(s.handleImportUsers))
 	mux.HandleFunc("GET /api/v1/admin/teachers", s.withAuth("admin", "admin_dinas")(s.handleAdminTeachers))

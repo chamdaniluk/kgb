@@ -247,6 +247,9 @@ func parseImportTeachers(rows [][]string) ([]store.ImportedTeacher, error) {
 	idxTMT := headerIndex(h, "TMT KGB Terakhir", "TMT KGB")
 	idxTMTCPNS := headerIndex(h, "TMT CPNS")
 	idxTMTGOL := headerIndex(h, "TMT GOL", "TMT Golongan")
+	idxBirthDate := headerIndex(h, "Tanggal Lahir", "Tgl Lahir")
+	idxPangkat := headerIndex(h, "Pangkat")
+	idxJabatan := headerIndex(h, "Jabatan")
 	if idxNIP < 0 || idxName < 0 || idxASN < 0 || idxUnit < 0 || idxGol < 0 || (idxMKG < 0 && idxTMTCPNS < 0 && idxTMTGOL < 0) {
 		return nil, errors.New("kolom wajib BKN: NIP, nama, status pegawai, instansi sub unit, golongan/pangkat, atau TMT CPNS/TMT GOL")
 	}
@@ -270,7 +273,7 @@ func parseImportTeachers(rows [][]string) ([]store.ImportedTeacher, error) {
 		if idxUnitCode >= 0 && cell(row, idxUnitCode) != "" {
 			parsedUnit.UnitCode = cell(row, idxUnitCode)
 		}
-		var tmtCPNS, tmtGOL, tmtKGB *time.Time
+		var tmtCPNS, tmtGOL, tmtKGB, birthDate *time.Time
 		if idxTMTCPNS >= 0 {
 			tmtCPNS, err = parseDateCell(cell(row, idxTMTCPNS))
 			if err != nil {
@@ -279,6 +282,12 @@ func parseImportTeachers(rows [][]string) ([]store.ImportedTeacher, error) {
 		}
 		if idxTMTGOL >= 0 {
 			tmtGOL, err = parseDateCell(cell(row, idxTMTGOL))
+			if err != nil {
+				return nil, err
+			}
+		}
+		if idxBirthDate >= 0 {
+			birthDate, err = parseDateCell(cell(row, idxBirthDate))
 			if err != nil {
 				return nil, err
 			}
@@ -299,7 +308,7 @@ func parseImportTeachers(rows [][]string) ([]store.ImportedTeacher, error) {
 		} else {
 			mkg, source = deriveMasaKerja(asn, tmtCPNS, tmtGOL, asOf)
 		}
-		result = append(result, store.ImportedTeacher{NIP: cell(row, idxNIP), Name: cell(row, idxName), ASNType: asn, UnitCode: parsedUnit.UnitCode, UnitName: parsedUnit.UnitName, UnitType: parsedUnit.UnitType, ParentUnitCode: parsedUnit.ParentUnitCode, ParentUnitName: parsedUnit.ParentUnitName, PangkatGol: cell(row, idxGol), MasaKerjaTahun: mkg, MasaKerjaSource: source, TMTKGBLast: tmtKGB})
+		result = append(result, store.ImportedTeacher{NIP: cell(row, idxNIP), Name: cell(row, idxName), ASNType: asn, UnitCode: parsedUnit.UnitCode, UnitName: parsedUnit.UnitName, UnitType: parsedUnit.UnitType, ParentUnitCode: parsedUnit.ParentUnitCode, ParentUnitName: parsedUnit.ParentUnitName, PangkatGol: cell(row, idxGol), Pangkat: cell(row, idxPangkat), Jabatan: cell(row, idxJabatan), BirthDate: birthDate, MasaKerjaTahun: mkg, MasaKerjaSource: source, TMTKGBLast: tmtKGB})
 	}
 	return result, nil
 }

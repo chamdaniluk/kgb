@@ -21,6 +21,13 @@ type Submission struct {
 	ProposedTMT            time.Time      `json:"proposed_tmt"`
 	ProposedMasaKerjaTahun *int           `json:"proposed_masa_kerja_tahun,omitempty"`
 	ProposedTMTKGBLast     *time.Time     `json:"proposed_tmt_kgb_last,omitempty"`
+	ProposedPangkatGol     *string        `json:"proposed_pangkat_gol,omitempty"`
+	ProposedPangkat        *string        `json:"proposed_pangkat,omitempty"`
+	ProposedJabatan        *string        `json:"proposed_jabatan,omitempty"`
+	ProposedUnitID         *int64         `json:"proposed_unit_id,omitempty"`
+	ProposedUnitName       string         `json:"proposed_unit_name,omitempty"`
+	ProposedEffectiveDate  *time.Time     `json:"proposed_effective_date,omitempty"`
+	ProposedChangeNote     string         `json:"proposed_change_note,omitempty"`
 	CurrentSalary          string         `json:"current_salary"`
 	NextSalary             string         `json:"next_salary"`
 	FileName               string         `json:"file_name,omitempty"`
@@ -34,10 +41,27 @@ type Submission struct {
 	NIP                    string         `json:"nip"`
 	ASNType                string         `json:"asn_type"`
 	PangkatGol             string         `json:"pangkat_gol"`
+	Pangkat                string         `json:"pangkat,omitempty"`
+	Jabatan                string         `json:"jabatan,omitempty"`
 	MasaKerjaTahun         int            `json:"masa_kerja_tahun"`
 	UnitID                 int64          `json:"unit_id"`
 	UnitName               string         `json:"unit_name"`
 	Letter                 *LetterSummary `json:"letter,omitempty"`
+}
+
+// VerificationUnitID returns the unit that owns the current workflow stage.
+// A validated mutation proposal takes precedence over the BKN master unit.
+func (s Submission) VerificationUnitID() int64 {
+	if s.ProposedUnitID != nil {
+		return *s.ProposedUnitID
+	}
+	return s.UnitID
+}
+
+// HasTeacherChange reports whether the submission carries an approved-data
+// proposal that must be reviewed together with the KGB request.
+func (s Submission) HasTeacherChange() bool {
+	return s.ProposedPangkatGol != nil || s.ProposedPangkat != nil || s.ProposedJabatan != nil || s.ProposedUnitID != nil
 }
 
 // AuditLog adalah satu entri jejak audit append-only.
@@ -116,6 +140,18 @@ type UnitCount struct {
 	Count int64  `json:"count"`
 }
 
+// TeacherChange adalah perubahan kepegawaian yang diusulkan melalui SK.
+// Identitas BKN (NIP, nama, tanggal lahir) sengaja tidak termasuk di sini.
+type TeacherChange struct {
+	PangkatGol    *string
+	Pangkat       *string
+	Jabatan       *string
+	UnitID        *int64
+	EffectiveDate *time.Time
+	Note          string
+	AuditDetails  map[string]any
+}
+
 // ImportedTeacher adalah baris master ASN setelah dinormalisasi dari file BKN.
 type ImportedTeacher struct {
 	NIP             string
@@ -127,6 +163,9 @@ type ImportedTeacher struct {
 	ParentUnitCode  string
 	ParentUnitName  string
 	PangkatGol      string
+	Pangkat         string
+	Jabatan         string
+	BirthDate       *time.Time
 	MasaKerjaTahun  int
 	MasaKerjaSource string
 	TMTKGBLast      *time.Time

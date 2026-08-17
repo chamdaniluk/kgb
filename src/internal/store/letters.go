@@ -127,12 +127,37 @@ func CommitIssue(ctx context.Context, pool *pgxpool.Pool, issue IssueContext, si
 	if err := UpdateTeacherAfterIssue(ctx, tx, issue.Submission.TeacherID, issue.Submission.ProposedTMT, masaKerja); err != nil {
 		return err
 	}
+	change := TeacherChange{
+		PangkatGol: issue.Submission.ProposedPangkatGol,
+		Pangkat:    issue.Submission.ProposedPangkat,
+		Jabatan:    issue.Submission.ProposedJabatan,
+		UnitID:     issue.Submission.ProposedUnitID,
+	}
+	if issue.Submission.HasTeacherChange() {
+		if err := ApplyTeacherChangeAtIssue(ctx, tx, issue.Submission.TeacherID, change); err != nil {
+			return err
+		}
+	}
 	details, err := json.Marshal(map[string]string{"number": issue.Number, "tte_receipt_id": receiptID})
 	if err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs (actor_user_id, submission_id, action, details, ip) VALUES ($1,$2,'tte',$3,$4)`, signerID, issue.Submission.ID, details, ip); err != nil {
 		return err
+	}
+	if issue.Submission.HasTeacherChange() {
+		changeDetails, _ := json.Marshal(map[string]any{
+			"pangkat_gol_baru": issue.Submission.ProposedPangkatGol,
+			"pangkat_baru":     issue.Submission.ProposedPangkat,
+			"jabatan_baru":     issue.Submission.ProposedJabatan,
+			"unit_baru_id":     issue.Submission.ProposedUnitID,
+			"unit_baru":        issue.Submission.ProposedUnitName,
+			"tanggal_berlaku":  issue.Submission.ProposedEffectiveDate,
+			"catatan":          issue.Submission.ProposedChangeNote,
+		})
+		if _, err := tx.Exec(ctx, `INSERT INTO audit_logs (actor_user_id, submission_id, action, details, ip) VALUES ($1,$2,'perubahan_data_terapan',$3,$4)`, signerID, issue.Submission.ID, changeDetails, ip); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs (actor_user_id, submission_id, action, details, ip) VALUES ($1,$2,'terbit',$3,$4)`, signerID, issue.Submission.ID, details, ip); err != nil {
 		return err

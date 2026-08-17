@@ -105,6 +105,159 @@ func parseOptionalFormDate(raw string) (*time.Time, error) {
 	return &value, nil
 }
 
+func parseOptionalEffectiveDate(raw string) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	value, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		return nil, errors.New("tanggal mulai berlaku SK tidak valid")
+	}
+	return &value, nil
+}
+
+func parseOptionalFormInt64(raw string) (*int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return nil, errors.New("unit tujuan tidak valid")
+	}
+	return &value, nil
+}
+
+// ProposedTeacherChangeInput adalah field perubahan kepegawaian yang boleh
+// diusulkan ASN berdasarkan SK. Identitas BKN tidak termasuk di sini.
+type ProposedTeacherChangeInput struct {
+	PangkatGol    string
+	Pangkat       string
+	Jabatan       string
+	UnitID        *int64
+	EffectiveDate *time.Time
+	Note          string
+}
+
+// resolveTeacherChange memvalidasi perubahan kepegawaian dan membuat detail
+// audit sebelum submission disimpan. Unit Korwil tidak boleh menjadi tujuan
+// mutasi; tujuan harus unit layanan yang dapat menerima antrean verifikasi.
+func resolveTeacherChange(teacher store.Teacher, input ProposedTeacherChangeInput, targetUnit *store.Unit, proposedTMT time.Time) (store.TeacherChange, error) {
+	input.PangkatGol = strings.TrimSpace(input.PangkatGol)
+	input.Pangkat = strings.TrimSpace(input.Pangkat)
+	input.Jabatan = strings.TrimSpace(input.Jabatan)
+	input.Note = strings.TrimSpace(input.Note)
+	hasChange := input.PangkatGol != "" || input.Pangkat != "" || input.Jabatan != "" || input.UnitID != nil
+	if !hasChange {
+		if input.EffectiveDate != nil || input.Note != "" {
+			return store.TeacherChange{}, errors.New("tanggal dan catatan hanya boleh diisi bersama perubahan data")
+		}
+		return store.TeacherChange{}, nil
+	}
+	if input.EffectiveDate == nil {
+		return store.TeacherChange{}, errors.New("tanggal mulai berlaku pada SK wajib diisi")
+	}
+	if input.EffectiveDate.After(proposedTMT) {
+		return store.TeacherChange{}, errors.New("tanggal mulai berlaku perubahan tidak boleh setelah TMT usulan KGB")
+	}
+	if input.Note == "" {
+		return store.TeacherChange{}, errors.New("catatan perubahan wajib diisi")
+	}
+	if len(input.Note) > 1000 || len(input.PangkatGol) > 100 || len(input.Pangkat) > 200 || len(input.Jabatan) > 200 {
+		return store.TeacherChange{}, errors.New("data perubahan terlalu panjang")
+	}
+	if input.UnitID != nil {
+		if targetUnit == nil || targetUnit.ID != *input.UnitID {
+			return store.TeacherChange{}, errors.New("unit tujuan tidak ditemukan")
+		}
+		switch targetUnit.Type {
+		case "sd", "tk", "smp", "skb", "dinas":
+		default:
+			return store.TeacherChange{}, errors.New("unit tujuan harus unit layanan, bukan Korwil")
+		}
+	}
+	if input.PangkatGol != "" && teacher.ASNType == "pppk" && input.PangkatGol != "IX" {
+		return store.TeacherChange{}, errors.New("golongan PPPK harus IX")
+	}
+	change := store.TeacherChange{
+		EffectiveDate: input.EffectiveDate,
+		Note:          input.Note,
+		AuditDetails:  make(map[string]any),
+	}
+	if input.PangkatGol != "" && input.PangkatGol != teacher.PangkatGol {
+		value := input.PangkatGol
+		change.PangkatGol = &value
+		change.AuditDetails["pangkat_gol_lama"] = teacher.PangkatGol
+		change.AuditDetails["pangkat_gol_baru"] = value
+	}
+	if input.Pangkat != "" && input.Pangkat != teacher.Pangkat {
+		value := input.Pangkat
+		change.Pangkat = &value
+		change.AuditDetails["pangkat_lama"] = teacher.Pangkat
+		change.AuditDetails["pangkat_baru"] = value
+	}
+	if input.Jabatan != "" && input.Jabatan != teacher.Jabatan {
+		value := input.Jabatan
+		change.Jabatan = &value
+		change.AuditDetails["jabatan_lama"] = teacher.Jabatan
+		change.AuditDetails["jabatan_baru"] = value
+	}
+	if input.UnitID != nil && *input.UnitID != teacher.UnitID {
+		value := *input.UnitID
+		change.UnitID = &value
+		change.AuditDetails["unit_lama"] = teacher.UnitName
+		change.AuditDetails["unit_baru"] = targetUnit.Name
+	}
+	if len(change.AuditDetails) == 0 {
+		return store.TeacherChange{}, errors.New("tidak ada perubahan data yang berbeda dari master BKN")
+	}
+	change.AuditDetails["tanggal_berlaku"] = input.EffectiveDate.Format("2006-01-02")
+	change.AuditDetails["catatan"] = input.Note
+	return change, nil
+}
+
+func (s *Server) teacherChangeFromForm(r *http.Request, teacher store.Teacher, proposedTMT time.Time) (store.TeacherChange, error) {
+	unitID, err := parseOptionalFormInt64(r.FormValue("change_unit_id"))
+	if err != nil {
+		return store.TeacherChange{}, err
+	}
+	var targetUnit *store.Unit
+	if unitID != nil {
+		unit, err := store.GetUnitByID(r.Context(), s.Pool, *unitID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return store.TeacherChange{}, errors.New("unit tujuan tidak ditemukan")
+			}
+			return store.TeacherChange{}, err
+		}
+		targetUnit = &unit
+	}
+	effectiveDate, err := parseOptionalEffectiveDate(r.FormValue("change_effective_date"))
+	if err != nil {
+		return store.TeacherChange{}, err
+	}
+	return resolveTeacherChange(teacher, ProposedTeacherChangeInput{
+		PangkatGol:    r.FormValue("change_pangkat_gol"),
+		Pangkat:       r.FormValue("change_pangkat"),
+		Jabatan:       r.FormValue("change_jabatan"),
+		UnitID:        unitID,
+		EffectiveDate: effectiveDate,
+		Note:          r.FormValue("change_note"),
+	}, targetUnit, proposedTMT)
+}
+
+func salaryGolongan(teacher store.Teacher, change store.TeacherChange) string {
+	gol := teacher.PangkatGol
+	if change.PangkatGol != nil {
+		gol = *change.PangkatGol
+	}
+	if teacher.ASNType == "pppk" {
+		return "IX"
+	}
+	return gol
+}
+
 func (s *Server) canAccessSubmission(r *http.Request, sub store.Submission) bool {
 	u := userFrom(r)
 	switch u.Role {
@@ -114,7 +267,7 @@ func (s *Server) canAccessSubmission(r *http.Request, sub store.Submission) bool
 		if u.UnitID == nil {
 			return false
 		}
-		inScope, err := store.UnitInScope(r.Context(), s.Pool, *u.UnitID, sub.UnitID)
+		inScope, err := store.UnitInScope(r.Context(), s.Pool, *u.UnitID, sub.VerificationUnitID())
 		return err == nil && inScope
 	case "asn":
 		t, ok := s.teacherForUser(r)
@@ -192,7 +345,12 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 	}
 	proposedTMTKGBLast, err := parseOptionalFormDate(r.FormValue("tmt_kgb_last"))
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "TMT KGB terakhir tidak valid.")
+		return
+	}
+	change, err := s.teacherChangeFromForm(r, t, proposedTMT)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "TEACHER_CHANGE_INVALID", err.Error())
 		return
 	}
 	masaKerja, tmtKGBLast, err := resolveKGBInputs(t, proposedMasaKerja, proposedTMTKGBLast, proposedTMT)
@@ -204,10 +362,7 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusUnprocessableEntity, "NOT_YET_ELIGIBLE", "Pengajuan belum mencapai dua tahun dari TMT KGB terakhir.")
 		return
 	}
-	gol := t.PangkatGol
-	if t.ASNType == "pppk" {
-		gol = "IX"
-	}
+	gol := salaryGolongan(t, change)
 	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, masaKerja)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND", "Kombinasi golongan/masa kerja tidak ada di skala gaji.")
@@ -241,7 +396,7 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	effectiveMasaKerja := masaKerja
-	sub, err := store.CreateSubmission(r.Context(), s.Pool, t.ID, userFrom(r).ID, proposedTMT, &effectiveMasaKerja, tmtKGBLast, current, next, files.OriginalName(header.Filename), path, size, clientIP(r))
+	sub, err := store.CreateSubmission(r.Context(), s.Pool, t.ID, userFrom(r).ID, proposedTMT, &effectiveMasaKerja, tmtKGBLast, change, current, next, files.OriginalName(header.Filename), path, size, clientIP(r))
 	if err != nil {
 		_ = s.Files.Remove(path)
 		if mapStoreError(w, err) {
@@ -283,7 +438,12 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	proposedTMTKGBLast, err := parseOptionalFormDate(r.FormValue("tmt_kgb_last"))
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "TMT KGB terakhir tidak valid.")
+		return
+	}
+	change, err := s.teacherChangeFromForm(r, t, proposedTMT)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "TEACHER_CHANGE_INVALID", err.Error())
 		return
 	}
 	masaKerja, tmtKGBLast, err := resolveKGBInputs(t, proposedMasaKerja, proposedTMTKGBLast, proposedTMT)
@@ -295,10 +455,7 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, "NOT_YET_ELIGIBLE", "Pengajuan belum mencapai dua tahun dari TMT KGB terakhir.")
 		return
 	}
-	gol := t.PangkatGol
-	if t.ASNType == "pppk" {
-		gol = "IX"
-	}
+	gol := salaryGolongan(t, change)
 	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, masaKerja)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND", "Skala gaji belum tersedia.")
@@ -320,7 +477,7 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	effectiveMasaKerja := masaKerja
-	sub, err := store.Resubmit(r.Context(), s.Pool, id, userFrom(r).ID, proposedTMT, &effectiveMasaKerja, tmtKGBLast, current, next, filepath.Base(header.Filename), path, size, clientIP(r))
+	sub, err := store.Resubmit(r.Context(), s.Pool, id, userFrom(r).ID, proposedTMT, &effectiveMasaKerja, tmtKGBLast, change, current, next, filepath.Base(header.Filename), path, size, clientIP(r))
 	if err != nil {
 		_ = s.Files.Remove(path)
 		if mapStoreError(w, err) {
@@ -407,7 +564,7 @@ func (s *Server) reviewDetail(w http.ResponseWriter, r *http.Request, role strin
 			writeErr(w, http.StatusForbidden, "FORBIDDEN", "Akun verifikator belum memiliki scope unit.")
 			return store.Submission{}, false
 		}
-		inScope, err := store.UnitInScope(r.Context(), s.Pool, *unitID, sub.UnitID)
+		inScope, err := store.UnitInScope(r.Context(), s.Pool, *unitID, sub.VerificationUnitID())
 		if err != nil || !inScope {
 			writeErr(w, http.StatusForbidden, "FORBIDDEN", "Pengajuan bukan dalam scope unit Anda.")
 			return store.Submission{}, false
