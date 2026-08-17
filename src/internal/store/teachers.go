@@ -219,7 +219,7 @@ func UpdateTeacherAfterIssue(ctx context.Context, tx pgx.Tx, teacherID int64, pr
 	}
 	_, err := tx.Exec(ctx, `UPDATE teachers SET
 		tmt_kgb_last=$1,
-		masa_kerja_tahun=$2+2,
+		masa_kerja_tahun=$2,
 		masa_kerja_source='kgb_terbit',
 		birth_place=COALESCE(NULLIF($3,''), birth_place),
 		birth_date=COALESCE($4, birth_date),
@@ -229,14 +229,13 @@ func UpdateTeacherAfterIssue(ctx context.Context, tx pgx.Tx, teacherID int64, pr
 		last_sk_pejabat=COALESCE(NULLIF($8,''), last_sk_pejabat),
 		last_sk_tanggal=COALESCE($9, last_sk_tanggal),
 		last_sk_nomor=COALESCE(NULLIF($10,''), last_sk_nomor),
-		last_sk_tmt_berlaku=COALESCE($11, last_sk_tmt_berlaku),
-		last_sk_masa_kerja_tahun=COALESCE($12, last_sk_masa_kerja_tahun),
-		last_sk_masa_kerja_bulan=COALESCE($13, last_sk_masa_kerja_bulan),
+		last_sk_tmt_berlaku=$1,
+		last_sk_masa_kerja_tahun=$2,
+		last_sk_masa_kerja_bulan=0,
 		updated_at=now()
-		WHERE id=$14`, proposedTMT, proposedMasaKerja,
+		WHERE id=$11`, proposedTMT, proposedMasaKerja,
 		draft.BirthPlace, draft.BirthDate, draft.Karpeg, draft.Pangkat, draft.Jabatan,
-		draft.LastSKPejabat, draft.LastSKTanggal, draft.LastSKNomor, draft.LastSKTMT,
-		draft.MKGLamaTahun, draft.MKGLamaBulan, teacherID)
+		draft.LastSKPejabat, draft.LastSKTanggal, draft.LastSKNomor, teacherID)
 	return err
 }
 

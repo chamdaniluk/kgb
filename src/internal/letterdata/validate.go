@@ -101,6 +101,15 @@ func ValidateDraft(d Draft) error {
 	if d.ProposedTMT.IsZero() {
 		return fmt.Errorf("%w: TMT usulan wajib diisi", ErrDraftIncomplete)
 	}
+	if d.MKGLamaBulan != 0 || d.MKGBaruBulan != 0 {
+		return fmt.Errorf("%w: masa kerja berkala harus 0 bulan", ErrDraftIncomplete)
+	}
+	if d.MKGLamaTahun != EvenYear(d.MKGLamaTahun) || d.MKGBaruTahun != d.MKGLamaTahun+2 {
+		return fmt.Errorf("%w: masa kerja berkala harus genap dan naik 2 tahun", ErrDraftIncomplete)
+	}
+	if d.LastSKTMT != nil && !IsPeriodicTMT(*d.LastSKTMT, d.ProposedTMT) {
+		return fmt.Errorf("%w: TMT KGB harus genap dua tahun dari TMT SK terakhir", ErrDraftIncomplete)
+	}
 	if err := requiredString("Karpeg", d.Karpeg); err != nil {
 		return err
 	}

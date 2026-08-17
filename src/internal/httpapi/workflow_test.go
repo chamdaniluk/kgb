@@ -369,6 +369,66 @@ func TestSubmitTanpaKarpegDitolak(t *testing.T) {
 	}
 }
 
+func TestSubmitMenghitungTMTGenapDariSKPertama(t *testing.T) {
+	fx := newFixture(t)
+	ctx := context.Background()
+	if _, err := fx.pool.Exec(ctx, `UPDATE teachers SET tmt_kgb_last='2020-12-01', last_sk_tmt_berlaku='2020-12-01', masa_kerja_source='tmt_cpns' WHERE nip=$1`, nipPNS); err != nil {
+		t.Fatal(err)
+	}
+	client, csrf := loginClient(t, fx.srv.URL, nipPNS, nipPNS)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("birth_place", "Grobogan")
+	_ = writer.WriteField("birth_date", "1980-01-01")
+	_ = writer.WriteField("karpeg", "I 123456")
+	_ = writer.WriteField("pangkat", "Penata Muda Tingkat I")
+	_ = writer.WriteField("jabatan", "Guru Ahli Pertama")
+	_ = writer.WriteField("last_sk_pejabat", "Kepala Dinas Pendidikan")
+	_ = writer.WriteField("last_sk_tanggal", "2020-12-01")
+	_ = writer.WriteField("last_sk_nomor", "800/001/4.2/2020")
+	_ = writer.WriteField("last_sk_tmt", "2020-12-01")
+	part, err := writer.CreateFormFile("file", "dukungan.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte("%PDF-1.4\n% test\n"))
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, fx.srv.URL+"/api/v1/submissions", &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-CSRF-Token", csrf)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var envelope struct {
+		Data  map[string]any `json:"data"`
+		Error map[string]any `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("submit status=%d body=%v", resp.StatusCode, envelope.Error)
+	}
+	got := envelope.Data["proposed_tmt"]
+	if !strings.HasPrefix(fmt.Sprint(got), "2026-12-01") {
+		t.Fatalf("proposed_tmt = %v, ingin 2026-12-01", got)
+	}
+	if fmt.Sprint(envelope.Data["draft_mkg_lama_tahun"]) != "4" || fmt.Sprint(envelope.Data["draft_mkg_baru_tahun"]) != "6" {
+		t.Fatalf("mkg draft = lama %v baru %v, ingin 4 → 6", envelope.Data["draft_mkg_lama_tahun"], envelope.Data["draft_mkg_baru_tahun"])
+	}
+	if fmt.Sprint(envelope.Data["draft_mkg_lama_bulan"]) != "0" || fmt.Sprint(envelope.Data["draft_mkg_baru_bulan"]) != "0" {
+		t.Fatalf("bulan mkg harus 0: %v / %v", envelope.Data["draft_mkg_lama_bulan"], envelope.Data["draft_mkg_baru_bulan"])
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

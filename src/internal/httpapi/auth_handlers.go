@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"sicendikia/internal/auth"
+	"sicendikia/internal/letterdata"
 	"sicendikia/internal/store"
 )
 
@@ -182,6 +183,19 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		}
 		if t.TMTKGBLast != nil {
 			me["tmt_kgb_last"] = t.TMTKGBLast.Format("2006-01-02")
+			nextTMT := letterdata.NextPeriodicTMT(*t.TMTKGBLast, time.Now())
+			me["proposed_tmt"] = nextTMT.Format("2006-01-02")
+			mkgYear := t.MasaKerjaTahun
+			if t.LastSKMasaKerjaTahun != nil {
+				mkgYear = *t.LastSKMasaKerjaTahun
+			}
+			mkg := letterdata.ComputePeriodicMasaKerja(letterdata.PeriodicInput{
+				LastTMT: *t.TMTKGBLast, NewTMT: nextTMT, LastMKGYear: mkgYear,
+			})
+			me["mkg_lama_tahun"] = mkg.LamaTahun
+			me["mkg_lama_bulan"] = 0
+			me["mkg_baru_tahun"] = mkg.BaruTahun
+			me["mkg_baru_bulan"] = 0
 		}
 		out["teacher"] = me
 	}

@@ -24,13 +24,13 @@ func validPNS() Draft {
 		Jabatan:       "Guru Ahli Pertama",
 		LastSKPejabat: "Kepala Dinas Pendidikan",
 		LastSKNomor:   "800/001/4.2/2024",
-		LastSKTanggal: date("2024-09-01"),
-		LastSKTMT:     date("2024-09-01"),
-		MKGLamaTahun:  3,
+		LastSKTanggal: date("2020-12-01"),
+		LastSKTMT:     date("2020-12-01"),
+		MKGLamaTahun:  4,
 		MKGLamaBulan:  0,
-		MKGBaruTahun:  5,
+		MKGBaruTahun:  6,
 		MKGBaruBulan:  0,
-		ProposedTMT:   *date("2026-09-01"),
+		ProposedTMT:   *date("2026-12-01"),
 		CurrentSalary: "3089300",
 		NextSalary:    "3186600",
 		UnitName:      "SDN 3 GROBOGAN",
@@ -95,10 +95,10 @@ func TestValidateDraftPPPKPerpanjanganDash(t *testing.T) {
 	}
 }
 
-func TestValidateDraftBulanDiLuarRentang(t *testing.T) {
+func TestValidateDraftTMTBukanAnniversaryDitolak(t *testing.T) {
 	d := validPNS()
-	d.MKGLamaBulan = 12
+	d.ProposedTMT = *date("2026-09-01")
 	if err := ValidateDraft(d); err == nil {
-		t.Fatal("bulan 12 harus ditolak")
+		t.Fatal("TMT 1 September dari SK 1 Desember harus ditolak")
 	}
 }

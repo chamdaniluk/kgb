@@ -91,6 +91,104 @@ func resolveKGBInputs(teacher store.Teacher, proposedMasaKerja *int, proposedTMT
 	return masaKerja, last, nil
 }
 
+func lastTMTForSchedule(teacher store.Teacher, draft store.LetterDraft, proposedLast *time.Time) *time.Time {
+	if draft.LastSKTMT != nil {
+		return draft.LastSKTMT
+	}
+	if proposedLast != nil {
+		return proposedLast
+	}
+	if teacher.TMTKGBLast != nil {
+		return teacher.TMTKGBLast
+	}
+	return teacher.LastSKTMTBerlaku
+}
+
+func lastMKGForSchedule(teacher store.Teacher, draft store.LetterDraft) int {
+	if teacher.LastSKMasaKerjaTahun != nil {
+		return *teacher.LastSKMasaKerjaTahun
+	}
+	if teacher.MasaKerjaSource == "kgb_terbit" {
+		return letterdata.EvenYear(teacher.MasaKerjaTahun)
+	}
+	return 0
+}
+
+func applyPeriodicSchedule(teacher store.Teacher, draft *store.LetterDraft, proposedLast *time.Time, asOf time.Time) (time.Time, letterdata.PeriodicMasaKerja, error) {
+	last := lastTMTForSchedule(teacher, *draft, proposedLast)
+	if last == nil {
+		return time.Time{}, letterdata.PeriodicMasaKerja{}, errors.New("TMT SK terakhir wajib diisi untuk menghitung TMT KGB genap dua tahun")
+	}
+	tmt := letterdata.NextPeriodicTMT(*last, asOf)
+	mkg := letterdata.ComputePeriodicMasaKerja(letterdata.PeriodicInput{
+		LastTMT:     *last,
+		NewTMT:      tmt,
+		LastMKGYear: lastMKGForSchedule(teacher, *draft),
+	})
+	draft.LastSKTMT = last
+	lama, baru, zero := mkg.LamaTahun, mkg.BaruTahun, 0
+	draft.MKGLamaTahun = &lama
+	draft.MKGLamaBulan = &zero
+	draft.MKGBaruTahun = &baru
+	draft.MKGBaruBulan = &zero
+	return tmt, mkg, nil
+}
+
+type preparedKGB struct {
+	ProposedTMT time.Time
+	LastTMT     *time.Time
+	MasaBaru    int
+	Change      store.TeacherChange
+	Draft       store.LetterDraft
+	Current     string
+	Next        string
+}
+
+func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.Time) (preparedKGB, error) {
+	proposedLast, err := parseOptionalFormDate(firstNonEmptyForm(r, "last_sk_tmt", "tmt_kgb_last"))
+	if err != nil {
+		return preparedKGB{}, errors.New("TMT SK terakhir tidak valid")
+	}
+	draft, err := letterDraftFromForm(r, t, letterdata.EvenYear(t.MasaKerjaTahun))
+	if err != nil {
+		return preparedKGB{}, err
+	}
+	tmt, mkg, err := applyPeriodicSchedule(t, &draft, proposedLast, asOf)
+	if err != nil {
+		return preparedKGB{}, err
+	}
+	change, err := s.teacherChangeFromForm(r, t, tmt)
+	if err != nil {
+		return preparedKGB{}, err
+	}
+	gol := salaryGolongan(t, change)
+	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, mkg.LamaTahun)
+	if err != nil {
+		return preparedKGB{}, err
+	}
+	if err := validateDraftFor(t, draft, tmt, current, next); err != nil {
+		return preparedKGB{}, err
+	}
+	return preparedKGB{
+		ProposedTMT: tmt,
+		LastTMT:     draft.LastSKTMT,
+		MasaBaru:    mkg.BaruTahun,
+		Change:      change,
+		Draft:       draft,
+		Current:     current,
+		Next:        next,
+	}, nil
+}
+
+func firstNonEmptyForm(r *http.Request, names ...string) string {
+	for _, name := range names {
+		if v := strings.TrimSpace(r.FormValue(name)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func parseOptionalFormInt(raw string) (*int, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -177,42 +275,17 @@ func letterDraftFromForm(r *http.Request, teacher store.Teacher, masaKerja int) 
 	if err != nil {
 		return store.LetterDraft{}, errors.New("masa kerja lama tidak valid")
 	}
-	if mkgLamaTahun == nil && teacher.LastSKMasaKerjaTahun != nil {
-		mkgLamaTahun = teacher.LastSKMasaKerjaTahun
-	}
-	if mkgLamaTahun == nil {
-		v := masaKerja - 2
-		if v < 0 {
-			v = 0
-		}
-		mkgLamaTahun = &v
-	}
 	mkgLamaBulan, err := parseOptionalFormInt(r.FormValue("mkg_lama_bulan"))
 	if err != nil {
 		return store.LetterDraft{}, errors.New("bulan masa kerja lama tidak valid")
-	}
-	if mkgLamaBulan == nil && teacher.LastSKMasaKerjaBulan != nil {
-		mkgLamaBulan = teacher.LastSKMasaKerjaBulan
-	}
-	if mkgLamaBulan == nil {
-		zero := 0
-		mkgLamaBulan = &zero
 	}
 	mkgBaruTahun, err := parseOptionalFormInt(r.FormValue("mkg_baru_tahun"))
 	if err != nil {
 		return store.LetterDraft{}, errors.New("masa kerja baru tidak valid")
 	}
-	if mkgBaruTahun == nil {
-		v := masaKerja
-		mkgBaruTahun = &v
-	}
 	mkgBaruBulan, err := parseOptionalFormInt(r.FormValue("mkg_baru_bulan"))
 	if err != nil {
 		return store.LetterDraft{}, errors.New("bulan masa kerja baru tidak valid")
-	}
-	if mkgBaruBulan == nil {
-		zero := 0
-		mkgBaruBulan = &zero
 	}
 	perpanjangan, _, err := parseOptionalDashDate(r.FormValue("perpanjangan_perjanjian_kerja"))
 	if err != nil {
@@ -485,39 +558,21 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "INVALID_FORM", "Form pengajuan tidak valid.")
 		return
 	}
-	proposedTMT, err := time.Parse("2006-01-02", strings.TrimSpace(r.FormValue("proposed_tmt")))
+	prep, err := s.prepareKGBFromForm(r, t, time.Now())
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "Tanggal TMT tidak valid.")
-		return
-	}
-	proposedMasaKerja, err := parseOptionalFormInt(r.FormValue("masa_kerja_tahun"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
-		return
-	}
-	proposedTMTKGBLast, err := parseOptionalFormDate(r.FormValue("tmt_kgb_last"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "TMT KGB terakhir tidak valid.")
-		return
-	}
-	change, err := s.teacherChangeFromForm(r, t, proposedTMT)
-	if err != nil {
-		writeErr(w, http.StatusUnprocessableEntity, "TEACHER_CHANGE_INVALID", err.Error())
-		return
-	}
-	masaKerja, tmtKGBLast, err := resolveKGBInputs(t, proposedMasaKerja, proposedTMTKGBLast, proposedTMT)
-	if err != nil {
+		if errors.Is(err, letterdata.ErrDraftIncomplete) {
+			writeErr(w, http.StatusUnprocessableEntity, "LETTER_DRAFT_INCOMPLETE", err.Error())
+			return
+		}
+		if errors.Is(err, store.ErrScaleNotFound) {
+			writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND", "Kombinasi golongan/masa kerja tidak ada di skala gaji.")
+			return
+		}
+		if strings.Contains(err.Error(), "perubahan") || strings.Contains(err.Error(), "unit tujuan") || strings.Contains(err.Error(), "golongan") {
+			writeErr(w, http.StatusUnprocessableEntity, "TEACHER_CHANGE_INVALID", err.Error())
+			return
+		}
 		writeErr(w, http.StatusUnprocessableEntity, "KGB_DATA_REQUIRED", err.Error())
-		return
-	}
-	if tmtKGBLast != nil && proposedTMT.Before(tmtKGBLast.AddDate(2, 0, 0)) {
-		writeErr(w, http.StatusUnprocessableEntity, "NOT_YET_ELIGIBLE", "Pengajuan belum mencapai dua tahun dari TMT KGB terakhir.")
-		return
-	}
-	gol := salaryGolongan(t, change)
-	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, masaKerja)
-	if err != nil {
-		writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND", "Kombinasi golongan/masa kerja tidak ada di skala gaji.")
 		return
 	}
 	file, header, err := r.FormFile("file")
@@ -547,19 +602,9 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusInternalServerError, "FILE_SAVE_FAILED", "Berkas gagal disimpan.")
 		return
 	}
-	draft, err := letterDraftFromForm(r, t, masaKerja)
-	if err != nil {
-		_ = s.Files.Remove(path)
-		writeErr(w, http.StatusUnprocessableEntity, "LETTER_DRAFT_INCOMPLETE", err.Error())
-		return
-	}
-	if err := validateDraftFor(t, draft, proposedTMT, current, next); err != nil {
-		_ = s.Files.Remove(path)
-		writeErr(w, http.StatusUnprocessableEntity, "LETTER_DRAFT_INCOMPLETE", err.Error())
-		return
-	}
-	effectiveMasaKerja := masaKerja
-	sub, err := store.CreateSubmission(r.Context(), s.Pool, t.ID, userFrom(r).ID, proposedTMT, &effectiveMasaKerja, tmtKGBLast, change, draft, current, next, files.OriginalName(header.Filename), path, size, clientIP(r))
+	draft := prep.Draft
+	effectiveMasaKerja := prep.MasaBaru
+	sub, err := store.CreateSubmission(r.Context(), s.Pool, t.ID, userFrom(r).ID, prep.ProposedTMT, &effectiveMasaKerja, prep.LastTMT, prep.Change, draft, prep.Current, prep.Next, files.OriginalName(header.Filename), path, size, clientIP(r))
 	if err != nil {
 		_ = s.Files.Remove(path)
 		if mapStoreError(w, err) {
@@ -589,39 +634,21 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "TEACHER_NOT_FOUND", "Data kepegawaian tidak ditemukan.")
 		return
 	}
-	proposedTMT, err := time.Parse("2006-01-02", strings.TrimSpace(r.FormValue("proposed_tmt")))
+	prep, err := s.prepareKGBFromForm(r, t, time.Now())
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "Tanggal TMT tidak valid.")
-		return
-	}
-	proposedMasaKerja, err := parseOptionalFormInt(r.FormValue("masa_kerja_tahun"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
-		return
-	}
-	proposedTMTKGBLast, err := parseOptionalFormDate(r.FormValue("tmt_kgb_last"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "TMT KGB terakhir tidak valid.")
-		return
-	}
-	change, err := s.teacherChangeFromForm(r, t, proposedTMT)
-	if err != nil {
-		writeErr(w, http.StatusUnprocessableEntity, "TEACHER_CHANGE_INVALID", err.Error())
-		return
-	}
-	masaKerja, tmtKGBLast, err := resolveKGBInputs(t, proposedMasaKerja, proposedTMTKGBLast, proposedTMT)
-	if err != nil {
+		if errors.Is(err, letterdata.ErrDraftIncomplete) {
+			writeErr(w, http.StatusUnprocessableEntity, "LETTER_DRAFT_INCOMPLETE", err.Error())
+			return
+		}
+		if errors.Is(err, store.ErrScaleNotFound) {
+			writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND", "Skala gaji belum tersedia.")
+			return
+		}
+		if strings.Contains(err.Error(), "perubahan") || strings.Contains(err.Error(), "unit tujuan") || strings.Contains(err.Error(), "golongan") {
+			writeErr(w, http.StatusUnprocessableEntity, "TEACHER_CHANGE_INVALID", err.Error())
+			return
+		}
 		writeErr(w, http.StatusUnprocessableEntity, "KGB_DATA_REQUIRED", err.Error())
-		return
-	}
-	if tmtKGBLast != nil && proposedTMT.Before(tmtKGBLast.AddDate(2, 0, 0)) {
-		writeErr(w, http.StatusUnprocessableEntity, "NOT_YET_ELIGIBLE", "Pengajuan belum mencapai dua tahun dari TMT KGB terakhir.")
-		return
-	}
-	gol := salaryGolongan(t, change)
-	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, masaKerja)
-	if err != nil {
-		writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND", "Skala gaji belum tersedia.")
 		return
 	}
 	file, header, err := r.FormFile("file")
@@ -639,19 +666,9 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, "FILE_INVALID", "Berkas harus PDF dan maksimal 5MB.")
 		return
 	}
-	draft, err := letterDraftFromForm(r, t, masaKerja)
-	if err != nil {
-		_ = s.Files.Remove(path)
-		writeErr(w, http.StatusUnprocessableEntity, "LETTER_DRAFT_INCOMPLETE", err.Error())
-		return
-	}
-	if err := validateDraftFor(t, draft, proposedTMT, current, next); err != nil {
-		_ = s.Files.Remove(path)
-		writeErr(w, http.StatusUnprocessableEntity, "LETTER_DRAFT_INCOMPLETE", err.Error())
-		return
-	}
-	effectiveMasaKerja := masaKerja
-	sub, err := store.Resubmit(r.Context(), s.Pool, id, userFrom(r).ID, proposedTMT, &effectiveMasaKerja, tmtKGBLast, change, draft, current, next, filepath.Base(header.Filename), path, size, clientIP(r))
+	draft := prep.Draft
+	effectiveMasaKerja := prep.MasaBaru
+	sub, err := store.Resubmit(r.Context(), s.Pool, id, userFrom(r).ID, prep.ProposedTMT, &effectiveMasaKerja, prep.LastTMT, prep.Change, draft, prep.Current, prep.Next, filepath.Base(header.Filename), path, size, clientIP(r))
 	if err != nil {
 		_ = s.Files.Remove(path)
 		if mapStoreError(w, err) {
