@@ -26,6 +26,9 @@ SELECT s.id, s.teacher_id, s.status, s.proposed_tmt,
        COALESCE(s.snapshot_pangkat, COALESCE(t.pangkat, '')), COALESCE(s.snapshot_jabatan, COALESCE(t.jabatan, '')),
        COALESCE(s.snapshot_masa_kerja_tahun, t.masa_kerja_tahun), COALESCE(s.snapshot_unit_id, t.unit_id),
        COALESCE(s.snapshot_unit_name, un.name),
+       COALESCE(s.snapshot_birth_place, COALESCE(t.birth_place,'')), s.snapshot_birth_date, COALESCE(s.snapshot_karpeg, COALESCE(t.karpeg,'')),
+       COALESCE(s.snapshot_last_sk_pejabat, COALESCE(t.last_sk_pejabat,'')), s.snapshot_last_sk_tanggal, COALESCE(s.snapshot_last_sk_nomor, COALESCE(t.last_sk_nomor,'')),
+       s.snapshot_last_sk_tmt_berlaku, s.snapshot_last_sk_masa_kerja_tahun, s.snapshot_last_sk_masa_kerja_bulan,
        l.id, l.number, l.issued_at, l.tte_receipt_id
 FROM submissions s
 JOIN teachers t ON t.id = s.teacher_id
@@ -47,7 +50,7 @@ func scanSubmission(row pgx.Row) (Submission, error) {
 		&s.CurrentSalary, &s.NextSalary, &s.FileName, &s.FilePath, &s.FileSize,
 		&s.RejectionNote, &s.SubmittedAt, &s.CreatedAt, &s.UpdatedAt,
 		&s.TeacherName, &s.NIP, &s.ASNType, &s.PangkatGol, &s.Pangkat, &s.Jabatan, &s.MasaKerjaTahun,
-		&s.UnitID, &s.UnitName,
+		&s.UnitID, &s.UnitName, &s.SnapshotBirthPlace, &s.SnapshotBirthDate, &s.SnapshotKarpeg, &s.SnapshotLastSKPejabat, &s.SnapshotLastSKTanggal, &s.SnapshotLastSKNomor, &s.SnapshotLastSKTMTBerlaku, &s.SnapshotLastSKMasaTahun, &s.SnapshotLastSKMasaBulan,
 		&letterID, &number, &issuedAt, &receipt,
 	)
 	if err != nil {
@@ -156,7 +159,9 @@ func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorI
 			snapshot_name=t.name, snapshot_nip=t.nip, snapshot_birth_date=t.birth_date,
 			snapshot_asn_type=t.asn_type, snapshot_pangkat_gol=t.pangkat_gol,
 			snapshot_pangkat=t.pangkat, snapshot_jabatan=t.jabatan,
-			snapshot_masa_kerja_tahun=t.masa_kerja_tahun,
+			snapshot_masa_kerja_tahun=t.masa_kerja_tahun, snapshot_birth_place=t.birth_place, snapshot_karpeg=t.karpeg,
+			snapshot_last_sk_pejabat=t.last_sk_pejabat, snapshot_last_sk_tanggal=t.last_sk_tanggal, snapshot_last_sk_nomor=t.last_sk_nomor,
+			snapshot_last_sk_tmt_berlaku=t.last_sk_tmt_berlaku, snapshot_last_sk_masa_kerja_tahun=t.last_sk_masa_kerja_tahun, snapshot_last_sk_masa_kerja_bulan=t.last_sk_masa_kerja_bulan,
 			snapshot_unit_id=t.unit_id, snapshot_unit_name=u.name
 		FROM teachers t JOIN units u ON u.id=t.unit_id
 		WHERE s.id=$1 AND t.id=s.teacher_id`, id); err != nil {
@@ -211,7 +216,9 @@ func Resubmit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, propos
 			snapshot_name=t.name, snapshot_nip=t.nip, snapshot_birth_date=t.birth_date,
 			snapshot_asn_type=t.asn_type, snapshot_pangkat_gol=t.pangkat_gol,
 			snapshot_pangkat=t.pangkat, snapshot_jabatan=t.jabatan,
-			snapshot_masa_kerja_tahun=t.masa_kerja_tahun,
+			snapshot_masa_kerja_tahun=t.masa_kerja_tahun, snapshot_birth_place=t.birth_place, snapshot_karpeg=t.karpeg,
+			snapshot_last_sk_pejabat=t.last_sk_pejabat, snapshot_last_sk_tanggal=t.last_sk_tanggal, snapshot_last_sk_nomor=t.last_sk_nomor,
+			snapshot_last_sk_tmt_berlaku=t.last_sk_tmt_berlaku, snapshot_last_sk_masa_kerja_tahun=t.last_sk_masa_kerja_tahun, snapshot_last_sk_masa_kerja_bulan=t.last_sk_masa_kerja_bulan,
 			snapshot_unit_id=t.unit_id, snapshot_unit_name=u.name
 		FROM teachers t JOIN units u ON u.id=t.unit_id
 		WHERE s.id=$1 AND t.id=s.teacher_id`, id); err != nil {

@@ -13,30 +13,42 @@ import (
 
 // Teacher: baris tabel teachers (+ nama unit via join).
 type Teacher struct {
-	ID              int64      `json:"id"`
-	UserID          *int64     `json:"user_id,omitempty"`
-	NIP             string     `json:"nip"`
-	Name            string     `json:"name"`
-	ASNType         string     `json:"asn_type"`
-	UnitID          int64      `json:"unit_id"`
-	UnitName        string     `json:"unit_name"`
-	PangkatGol      string     `json:"pangkat_gol"`
-	Pangkat         string     `json:"pangkat,omitempty"`
-	Jabatan         string     `json:"jabatan,omitempty"`
-	BirthDate       *time.Time `json:"birth_date,omitempty"`
-	MasaKerjaTahun  int        `json:"masa_kerja_tahun"`
-	MasaKerjaSource string     `json:"masa_kerja_source,omitempty"`
-	TMTKGBLast      *time.Time `json:"tmt_kgb_last,omitempty"`
+	ID                   int64      `json:"id"`
+	UserID               *int64     `json:"user_id,omitempty"`
+	NIP                  string     `json:"nip"`
+	Name                 string     `json:"name"`
+	ASNType              string     `json:"asn_type"`
+	UnitID               int64      `json:"unit_id"`
+	UnitName             string     `json:"unit_name"`
+	PangkatGol           string     `json:"pangkat_gol"`
+	Pangkat              string     `json:"pangkat,omitempty"`
+	Jabatan              string     `json:"jabatan,omitempty"`
+	BirthPlace           string     `json:"birth_place,omitempty"`
+	Karpeg               string     `json:"karpeg,omitempty"`
+	LastSKPejabat        string     `json:"last_sk_pejabat,omitempty"`
+	LastSKTanggal        *time.Time `json:"last_sk_tanggal,omitempty"`
+	LastSKNomor          string     `json:"last_sk_nomor,omitempty"`
+	LastSKTMTBerlaku     *time.Time `json:"last_sk_tmt_berlaku,omitempty"`
+	LastSKMasaKerjaTahun *int       `json:"last_sk_masa_kerja_tahun,omitempty"`
+	LastSKMasaKerjaBulan *int       `json:"last_sk_masa_kerja_bulan,omitempty"`
+	BirthDate            *time.Time `json:"birth_date,omitempty"`
+	MasaKerjaTahun       int        `json:"masa_kerja_tahun"`
+	MasaKerjaSource      string     `json:"masa_kerja_source,omitempty"`
+	TMTKGBLast           *time.Time `json:"tmt_kgb_last,omitempty"`
 }
 
 const teacherCols = `t.id, t.user_id, t.nip, t.name, t.asn_type,
        t.unit_id, un.name, t.pangkat_gol, COALESCE(t.pangkat,''), COALESCE(t.jabatan,''), t.birth_date,
+       COALESCE(t.birth_place,''), COALESCE(t.karpeg,''),
+       COALESCE(t.last_sk_pejabat,''), t.last_sk_tanggal, COALESCE(t.last_sk_nomor,''),
+       t.last_sk_tmt_berlaku, t.last_sk_masa_kerja_tahun, t.last_sk_masa_kerja_bulan,
        t.masa_kerja_tahun, COALESCE(t.masa_kerja_source,''), t.tmt_kgb_last`
 
 func scanTeacher(row pgx.Row) (Teacher, error) {
 	var t Teacher
 	err := row.Scan(&t.ID, &t.UserID, &t.NIP, &t.Name, &t.ASNType,
-		&t.UnitID, &t.UnitName, &t.PangkatGol, &t.Pangkat, &t.Jabatan, &t.BirthDate,
+		&t.UnitID, &t.UnitName, &t.PangkatGol, &t.Pangkat, &t.Jabatan, &t.BirthDate, &t.BirthPlace, &t.Karpeg,
+		&t.LastSKPejabat, &t.LastSKTanggal, &t.LastSKNomor, &t.LastSKTMTBerlaku, &t.LastSKMasaKerjaTahun, &t.LastSKMasaKerjaBulan,
 		&t.MasaKerjaTahun, &t.MasaKerjaSource, &t.TMTKGBLast)
 	return t, err
 }

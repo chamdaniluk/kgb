@@ -239,11 +239,16 @@ func submitPDF(t *testing.T, client *http.Client, base, csrf, date string) (*htt
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
 	var envelope struct {
-		Data map[string]any `json:"data"`
+		Data  map[string]any `json:"data"`
+		Error map[string]any `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+	if err := json.Unmarshal(raw, &envelope); err != nil {
 		t.Fatal(err)
+	}
+	if resp.StatusCode >= 400 {
+		return resp, envelope.Error
 	}
 	return resp, envelope.Data
 }

@@ -49,6 +49,13 @@ func mapStoreError(w http.ResponseWriter, err error) bool {
 	return true
 }
 
+func formatTanggalID(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format("02 January 2006")
+}
+
 func (s *Server) teacherForUser(r *http.Request) (store.Teacher, bool) {
 	t, err := store.GetTeacherByUserID(r.Context(), s.Pool, userFrom(r).ID)
 	if err != nil {
@@ -676,7 +683,57 @@ func (s *Server) handleSignLetter(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		_ = store.ReleaseIssue(context.Background(), s.Pool, submissionID, issue.LockToken)
 	}()
-	letterPDF, err := s.Renderer.RenderLetter(r.Context(), pdf.LetterData{Number: issue.Number, TeacherName: issue.Submission.TeacherName, NIP: issue.Submission.NIP, UnitName: issue.Submission.UnitName, ProposedTMT: issue.Submission.ProposedTMT.Format("02-01-2006"), CurrentSalary: issue.Submission.CurrentSalary, NextSalary: issue.Submission.NextSalary, IssuedAt: pdf.TodayID(), SignerName: signer.Name})
+	ld := pdf.LetterData{
+		Number:        issue.Number,
+		TanggalNaskah: pdf.TodayID(),
+		IssuedAt:      pdf.TodayID(),
+		ASNType:       issue.Submission.ASNType,
+		TeacherName:   issue.Submission.TeacherName,
+		NIP:           issue.Submission.NIP,
+		Karpeg:        issue.Submission.SnapshotKarpeg,
+		BirthPlace:    issue.Submission.SnapshotBirthPlace,
+		BirthDate:     formatTanggalID(issue.Submission.SnapshotBirthDate),
+		Pangkat:       issue.Submission.Pangkat,
+		PangkatGol:    issue.Submission.PangkatGol,
+		Jabatan:       issue.Submission.Jabatan,
+		UnitName:      issue.Submission.UnitName,
+		CurrentSalary: issue.Submission.CurrentSalary,
+		NextSalary:    issue.Submission.NextSalary,
+		MasaKerjaLamaTahun: func() int {
+			if v := issue.Submission.SnapshotLastSKMasaTahun; v != nil {
+				return *v
+			}
+			return issue.Submission.MasaKerjaTahun - 2
+		}(),
+		MasaKerjaLamaBulan: func() int {
+			if v := issue.Submission.SnapshotLastSKMasaBulan; v != nil {
+				return *v
+			}
+			return 0
+		}(),
+		MasaKerjaBaruTahun: func() int {
+			if v := issue.Submission.ProposedMasaKerjaTahun; v != nil {
+				return *v
+			}
+			return issue.Submission.MasaKerjaTahun
+		}(),
+		MasaKerjaBaruBulan: 0,
+		Golongan:           issue.Submission.PangkatGol,
+		ProposedTMT:        issue.Submission.ProposedTMT.Format("02-01-2006"),
+		NextKGBDate:        issue.Submission.ProposedTMT.AddDate(2, 0, 0).Format("02-01-2006"),
+		LastSKPejabat:      issue.Submission.SnapshotLastSKPejabat,
+		LastSKTanggal:      formatTanggalID(issue.Submission.SnapshotLastSKTanggal),
+		LastSKNomor:        issue.Submission.SnapshotLastSKNomor,
+		LastSKTMTBerlaku:   formatTanggalID(issue.Submission.SnapshotLastSKTMTBerlaku),
+		SignerName:         signer.Name,
+		SignerNIP: func() string {
+			if signer.NIK != nil {
+				return *signer.NIK
+			}
+			return ""
+		}(),
+	}
+	letterPDF, err := pdf.RenderLetter(r.Context(), s.Renderer, ld)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "PDF_RENDER_FAILED", "Konsep surat gagal dibuat.")
 		return
