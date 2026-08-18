@@ -116,32 +116,40 @@ func ListSubmissionsForTeacher(ctx context.Context, pool *pgxpool.Pool, teacherI
 }
 
 // ListQueue mengambil antrean status tertentu. Unit hanya boleh melihat unitnya.
-func ListQueue(ctx context.Context, pool *pgxpool.Pool, role string, unitID *int64, status string) ([]Submission, error) {
-	query := submissionSelect + ` WHERE s.status = $1`
+// Mengembalikan potongan halaman beserta total baris (untuk pagination).
+func ListQueue(ctx context.Context, pool *pgxpool.Pool, role string, unitID *int64, status string, page Page) ([]Submission, int64, error) {
+	where := ` WHERE s.status = $1`
 	args := []any{status}
 	verificationUnit := "COALESCE(s.proposed_unit_id, s.snapshot_unit_id, t.unit_id)"
 	if role == "verifikator_unit" {
 		if unitID == nil {
-			return nil, ErrForbidden
+			return nil, 0, ErrForbidden
 		}
-		query += ` AND (` + verificationUnit + ` = $2 OR EXISTS (SELECT 1 FROM units scope JOIN units child ON child.parent_id=scope.id WHERE scope.id=$2 AND scope.type='korwil' AND child.id=` + verificationUnit + ` AND child.type IN ('sd','tk')))`
+		where += ` AND (` + verificationUnit + ` = $2 OR EXISTS (SELECT 1 FROM units scope JOIN units child ON child.parent_id=scope.id WHERE scope.id=$2 AND scope.type='korwil' AND child.id=` + verificationUnit + ` AND child.type IN ('sd','tk')))`
 		args = append(args, *unitID)
 	}
-	query += ` ORDER BY s.submitted_at ASC NULLS LAST, s.id ASC`
+	var total int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM submissions s JOIN teachers t ON t.id=s.teacher_id`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	query := submissionSelect + where + ` ORDER BY s.submitted_at ASC NULLS LAST, s.id ASC`
+	lim, limArgs := page.clause(len(args) + 1)
+	query += lim
+	args = append(args, limArgs...)
 	rows, err := pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	result := make([]Submission, 0)
 	for rows.Next() {
 		s, err := scanSubmission(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		result = append(result, s)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 // CreateSubmission menyimpan pengajuan dan audit submit dalam satu transaksi.

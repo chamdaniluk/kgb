@@ -12,26 +12,35 @@ import (
 )
 
 // ListUsers mengambil akun untuk admin tanpa password hash.
-func ListUsers(ctx context.Context, pool *pgxpool.Pool, q string) ([]UserSummary, error) {
+func ListUsers(ctx context.Context, pool *pgxpool.Pool, q string, page Page) ([]UserSummary, int64, error) {
 	pattern := "%" + q + "%"
-	rows, err := pool.Query(ctx, `
+	var total int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users u WHERE ($1='' OR u.username ILIKE $2 OR u.name ILIKE $2)`, q, pattern).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	query := `
 		SELECT u.id, u.username, u.role, u.name, u.unit_id, un.name, u.is_active, u.last_login_at
 		FROM users u LEFT JOIN units un ON un.id=u.unit_id
 		WHERE ($1='' OR u.username ILIKE $2 OR u.name ILIKE $2)
-		ORDER BY u.name, u.username`, q, pattern)
+		ORDER BY u.name, u.username`
+	args := []any{q, pattern}
+	lim, limArgs := page.clause(len(args) + 1)
+	query += lim
+	args = append(args, limArgs...)
+	rows, err := pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	result := make([]UserSummary, 0)
 	for rows.Next() {
 		var u UserSummary
 		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.Name, &u.UnitID, &u.UnitName, &u.IsActive, &u.LastLogin); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		result = append(result, u)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 // CreateStaffUser membuat akun petugas dan menolak username yang sama dengan NIP.
@@ -160,22 +169,31 @@ func UpdateStaffUser(ctx context.Context, pool *pgxpool.Pool, id int64, name *st
 	return u, err
 }
 
-// ListSalaryScales haalt skala gaji dengan filter sederhana.
-func ListSalaryScales(ctx context.Context, pool *pgxpool.Pool, asnType, golongan string) ([]SalaryScale, error) {
-	rows, err := pool.Query(ctx, `SELECT id, asn_type, golongan, masa_kerja_tahun, gaji::text FROM salary_scales WHERE ($1='' OR asn_type=$1) AND ($2='' OR golongan=$2) ORDER BY asn_type, golongan, masa_kerja_tahun`, asnType, golongan)
+// ListSalaryScales mengambil skala gaji dengan filter sederhana + pagination.
+func ListSalaryScales(ctx context.Context, pool *pgxpool.Pool, asnType, golongan string, page Page) ([]SalaryScale, int64, error) {
+	var total int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM salary_scales WHERE ($1='' OR asn_type=$1) AND ($2='' OR golongan=$2)`, asnType, golongan).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	query := `SELECT id, asn_type, golongan, masa_kerja_tahun, gaji::text FROM salary_scales WHERE ($1='' OR asn_type=$1) AND ($2='' OR golongan=$2) ORDER BY asn_type, golongan, masa_kerja_tahun`
+	args := []any{asnType, golongan}
+	lim, limArgs := page.clause(len(args) + 1)
+	query += lim
+	args = append(args, limArgs...)
+	rows, err := pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	result := make([]SalaryScale, 0)
 	for rows.Next() {
 		var s SalaryScale
 		if err := rows.Scan(&s.ID, &s.ASNType, &s.Golongan, &s.MasaKerjaTahun, &s.Gaji); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		result = append(result, s)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 // UpsertSalaryScales memasukkan skala baru dengan kunci resmi.
@@ -237,22 +255,28 @@ func CreateTemplate(ctx context.Context, pool *pgxpool.Pool, pattern string) (Le
 	return t, nil
 }
 
-// ListAuditLogs mengambil audit dengan filter admin.
-func ListAuditLogs(ctx context.Context, pool *pgxpool.Pool, submissionID *int64, action string, limit int) ([]AuditLog, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
+// ListAuditLogs mengambil audit dengan filter admin + pagination.
+func ListAuditLogs(ctx context.Context, pool *pgxpool.Pool, submissionID *int64, action string, page Page) ([]AuditLog, int64, error) {
 	var sid any
 	if submissionID != nil {
 		sid = *submissionID
 	}
-	rows, err := pool.Query(ctx, `
+	var total int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_logs a WHERE ($1::bigint IS NULL OR a.submission_id=$1) AND ($2='' OR a.action=$2)`, sid, action).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	query := `
 		SELECT a.id,a.actor_user_id,COALESCE(u.name,''),a.submission_id,a.action,a.details,COALESCE(a.ip,''),a.created_at
 		FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_user_id
 		WHERE ($1::bigint IS NULL OR a.submission_id=$1) AND ($2='' OR a.action=$2)
-		ORDER BY a.created_at DESC,a.id DESC LIMIT $3`, sid, action, limit)
+		ORDER BY a.created_at DESC,a.id DESC`
+	args := []any{sid, action}
+	lim, limArgs := page.clause(len(args) + 1)
+	query += lim
+	args = append(args, limArgs...)
+	rows, err := pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	result := make([]AuditLog, 0)
@@ -260,14 +284,14 @@ func ListAuditLogs(ctx context.Context, pool *pgxpool.Pool, submissionID *int64,
 		var a AuditLog
 		var raw []byte
 		if err := rows.Scan(&a.ID, &a.ActorUserID, &a.ActorName, &a.SubmissionID, &a.Action, &raw, &a.IP, &a.CreatedAt); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if len(raw) > 0 {
 			_ = json.Unmarshal(raw, &a.Details)
 		}
 		result = append(result, a)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 // TouchAudit stores no secrets; helper for admin mutations.

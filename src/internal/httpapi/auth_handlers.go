@@ -132,6 +132,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"username": u.Username,
 		"role":     u.Role,
 		"name":     u.Name,
+		"csrf":     csrfFrom(r),
 	}
 	if u.UnitName != nil {
 		out["unit"] = *u.UnitName

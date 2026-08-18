@@ -96,6 +96,32 @@ func BeginIssue(ctx context.Context, pool *pgxpool.Pool, submissionID int64) (Is
 	return IssueContext{Submission: submission, Template: template, Number: number, LockToken: lockToken}, nil
 }
 
+// PreviewLetterNumber menghitung nomor surat pratinjau dari template aktif
+// tanpa mencadangkan atau menaikkan sequence. Dipakai untuk draft/pratinjau
+// naskah sebelum TTE; nomor final tetap ditetapkan oleh BeginIssue saat TTE.
+func PreviewLetterNumber(ctx context.Context, pool *pgxpool.Pool) (string, error) {
+	var pattern string
+	err := pool.QueryRow(ctx, `SELECT pattern FROM letter_number_templates WHERE is_active=true LIMIT 1`).Scan(&pattern)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errors.New("template nomor surat aktif belum tersedia")
+	}
+	if err != nil {
+		return "", err
+	}
+	var sequence int64
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) +
+		       (SELECT count(*) FROM submissions WHERE status='menunggu_tte' AND tte_number IS NOT NULL) + 1
+		FROM letters
+		WHERE issued_at >= date_trunc('year', now())
+		  AND issued_at < date_trunc('year', now()) + interval '1 year'`).Scan(&sequence); err != nil {
+		return "", err
+	}
+	number := strings.ReplaceAll(pattern, "{SEQ}", fmt.Sprintf("%03d", sequence))
+	number = strings.ReplaceAll(number, "{YEAR}", time.Now().Format("2006"))
+	return number, nil
+}
+
 // ReleaseIssue membatalkan reservation jika rendering/TTE gagal.
 func ReleaseIssue(ctx context.Context, pool *pgxpool.Pool, submissionID int64, lockToken string) error {
 	_, err := pool.Exec(ctx, `UPDATE submissions SET tte_lock_token=NULL, tte_lock_expires_at=NULL, updated_at=now() WHERE id=$1 AND status='menunggu_tte' AND tte_lock_token=$2`, submissionID, lockToken)

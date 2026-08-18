@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"sicendikia/internal/auth"
 	"sicendikia/internal/esign"
@@ -99,6 +100,7 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("GET /api/v1/letters/pending-tte", s.withAuth("pimpinan")(s.handlePendingTTE))
 	mux.HandleFunc("POST /api/v1/letters/{submission_id}/sign", s.withAuth("pimpinan")(s.handleSignLetter))
+	mux.HandleFunc("GET /api/v1/letters/{submission_id}/draft-docx", s.withAuth("pimpinan")(s.handleDraftDOCX))
 	mux.HandleFunc("GET /api/v1/letters/{id}/download", s.withAuth()(s.handleLetterDownload))
 	mux.HandleFunc("GET /api/v1/letters", s.withAuth("verifikator_dinas", "admin_dinas", "pimpinan", "admin")(s.handleListLetters))
 	mux.HandleFunc("GET /api/v1/reports/issued", s.withAuth(staffReportRoles()...)(s.handleIssuedHistory))
@@ -233,4 +235,23 @@ func roleAllowed(role string, allowed []string) bool {
 func userFrom(r *http.Request) store.User {
 	u, _ := r.Context().Value(ctxUser).(store.User)
 	return u
+}
+
+// csrfFrom mengambil token CSRF sesi aktif dari context (diisi oleh withAuth).
+func csrfFrom(r *http.Request) string {
+	c, _ := r.Context().Value(ctxCSRF).(string)
+	return c
+}
+
+// pageFrom membaca limit/offset dari query dan menormalkannya lewat store.NewPage.
+// limit di luar {0,20,50,100} dipaksa ke default 20; 0 berarti semua baris.
+func pageFrom(r *http.Request) store.Page {
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	return store.NewPage(limit, offset)
 }

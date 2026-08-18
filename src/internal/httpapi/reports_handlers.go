@@ -16,27 +16,29 @@ func (s *Server) handleIssuedHistory(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
 	year, _ := strconv.Atoi(r.URL.Query().Get("year"))
 	unitID, _ := strconv.ParseInt(r.URL.Query().Get("unit_id"), 10, 64)
-	items, err := store.ListIssuedSubmissions(r.Context(), s.Pool, u.Role, u.UnitID, store.IssuedFilter{
+	page := pageFrom(r)
+	items, total, err := store.ListIssuedSubmissions(r.Context(), s.Pool, u.Role, u.UnitID, store.IssuedFilter{
 		Query:  r.URL.Query().Get("q"),
 		Year:   year,
 		UnitID: unitID,
-	})
+	}, page)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "INTERNAL", "Gagal mengambil riwayat pengajuan.")
 		return
 	}
-	writeData(w, http.StatusOK, items)
+	writeDataMeta(w, http.StatusOK, items, map[string]any{"limit": page.Limit, "offset": page.Offset, "total": total})
 }
 
 func (s *Server) handleNominations(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
-	items, err := store.ListNominations(r.Context(), s.Pool, u.Role, u.UnitID, store.NominationFilter{
+	page := pageFrom(r)
+	items, total, err := store.ListNominations(r.Context(), s.Pool, u.Role, u.UnitID, store.NominationFilter{
 		Query:  r.URL.Query().Get("q"),
 		Bucket: r.URL.Query().Get("bucket"),
-	}, time.Now())
+	}, time.Now(), page)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "INTERNAL", "Gagal mengambil nominasi KGB.")
 		return
 	}
-	writeData(w, http.StatusOK, items)
+	writeDataMeta(w, http.StatusOK, items, map[string]any{"limit": page.Limit, "offset": page.Offset, "total": total})
 }

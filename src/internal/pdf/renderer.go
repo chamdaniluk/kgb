@@ -157,6 +157,53 @@ func letterValues(data LetterData) map[string]string {
 	}
 }
 
+// RenderLetterDOCX mengisi template DOCX dinas dengan data naskah dan
+// mengembalikan byte DOCX apa adanya, tanpa konversi ke PDF. Dipakai untuk
+// pratinjau/draft SK yang bisa diunduh sebelum TTE, sehingga tidak butuh
+// LibreOffice terpasang.
+func RenderLetterDOCX(r *Renderer, data LetterData) ([]byte, error) {
+	if r == nil {
+		return nil, errors.New("renderer belum dikonfigurasi")
+	}
+	if data.TanggalNaskah == "" {
+		data.TanggalNaskah = TodayID()
+	}
+	if data.IssuedAt == "" {
+		data.IssuedAt = data.TanggalNaskah
+	}
+	templatePath, err := r.resolveTemplate(data.ASNType)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp(r.TempDir, "si-cendikia-docx-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	docxPath := filepath.Join(dir, "draft.docx")
+	if err := fillDOCX(templatePath, docxPath, letterValues(data)); err != nil {
+		return nil, err
+	}
+	body, err := os.ReadFile(docxPath)
+	if err != nil {
+		return nil, fmt.Errorf("baca DOCX hasil isi: %w", err)
+	}
+	return body, nil
+}
+
+// resolveTemplate memilih template PNS/PPPK dan memastikan file ada.
+func (r *Renderer) resolveTemplate(asnType string) (string, error) {
+	kind := "pns"
+	if strings.ToLower(asnType) == "pppk" {
+		kind = "pppk"
+	}
+	templatePath := r.templatePath(kind)
+	if _, err := os.Stat(templatePath); err != nil {
+		return "", fmt.Errorf("template SK %s tidak ditemukan: %w", kind, err)
+	}
+	return templatePath, nil
+}
+
 func RenderLetter(ctx context.Context, r *Renderer, data LetterData) ([]byte, error) {
 	if r == nil || r.Binary == "" {
 		return nil, errors.New("LibreOffice tidak ditemukan; set PDF_BIN")
@@ -167,13 +214,9 @@ func RenderLetter(ctx context.Context, r *Renderer, data LetterData) ([]byte, er
 	if data.IssuedAt == "" {
 		data.IssuedAt = data.TanggalNaskah
 	}
-	kind := "pns"
-	if strings.ToLower(data.ASNType) == "pppk" {
-		kind = "pppk"
-	}
-	templatePath := r.templatePath(kind)
-	if _, err := os.Stat(templatePath); err != nil {
-		return nil, fmt.Errorf("template SK %s tidak ditemukan: %w", kind, err)
+	templatePath, err := r.resolveTemplate(data.ASNType)
+	if err != nil {
+		return nil, err
 	}
 	dir, err := os.MkdirTemp(r.TempDir, "si-cendikia-pdf-")
 	if err != nil {

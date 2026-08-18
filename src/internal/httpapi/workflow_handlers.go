@@ -728,12 +728,13 @@ func (s *Server) handlePendingTTE(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request, role, status string) {
-	items, err := store.ListQueue(r.Context(), s.Pool, role, userFrom(r).UnitID, status)
+	page := pageFrom(r)
+	items, total, err := store.ListQueue(r.Context(), s.Pool, role, userFrom(r).UnitID, status, page)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "INTERNAL", "Gagal mengambil antrean.")
 		return
 	}
-	writeData(w, http.StatusOK, items)
+	writeDataMeta(w, http.StatusOK, items, map[string]any{"limit": page.Limit, "offset": page.Offset, "total": total})
 }
 
 func (s *Server) reviewDetail(w http.ResponseWriter, r *http.Request, role string) (store.Submission, bool) {
@@ -943,6 +944,100 @@ func (s *Server) handleSignLetter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeData(w, http.StatusCreated, map[string]any{"number": issue.Number, "issued_at": time.Now().Format(time.RFC3339), "receipt_id": sign.ReceiptID})
+}
+
+// handleDraftDOCX mengunduh draft naskah SK dalam format DOCX untuk ditinjau
+// atau ditandatangani manual. Bersifat read-only: memakai nomor pratinjau dan
+// tidak mencadangkan sequence atau lock TTE.
+func (s *Server) handleDraftDOCX(w http.ResponseWriter, r *http.Request) {
+	submissionID, err := parsePathID(r, "submission_id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "INVALID_ID", "ID pengajuan tidak valid.")
+		return
+	}
+	if s.Renderer == nil {
+		writeErr(w, http.StatusServiceUnavailable, "PDF_NOT_CONFIGURED", "Renderer naskah belum dikonfigurasi.")
+		return
+	}
+	sub, err := store.GetSubmission(r.Context(), s.Pool, submissionID)
+	if err != nil {
+		if !mapStoreError(w, err) {
+			writeErr(w, http.StatusInternalServerError, "INTERNAL", "Gagal mengambil pengajuan.")
+		}
+		return
+	}
+	if sub.Status != "menunggu_tte" {
+		writeErr(w, http.StatusConflict, "NOT_PENDING_TTE", "Draft hanya tersedia saat pengajuan menunggu TTE.")
+		return
+	}
+	if err := store.ValidateSubmissionDraft(sub); err != nil {
+		if !mapStoreError(w, err) {
+			writeErr(w, http.StatusUnprocessableEntity, "DRAFT_INCOMPLETE", "Naskah SK belum lengkap untuk membuat draft.")
+		}
+		return
+	}
+	number, err := store.PreviewLetterNumber(r.Context(), s.Pool)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "TEMPLATE_UNAVAILABLE", "Template nomor surat aktif belum tersedia.")
+		return
+	}
+	signer := userFrom(r)
+	signerJob := ""
+	if signer.JobTitle != nil {
+		signerJob = *signer.JobTitle
+	}
+	signerNIP := ""
+	if signer.EmployeeNumber != nil {
+		signerNIP = strings.TrimSpace(*signer.EmployeeNumber)
+	}
+	draft := sub.LetterDraftValues()
+	perpanjangan := "-"
+	if draft.Perpanjangan != nil {
+		perpanjangan = pdf.FormatTanggalID(*draft.Perpanjangan)
+	}
+	ld := pdf.LetterData{
+		Number:              number,
+		TanggalNaskah:       pdf.TodayID(),
+		IssuedAt:            pdf.TodayID(),
+		ASNType:             sub.ASNType,
+		TeacherName:         sub.TeacherName,
+		NIP:                 sub.NIP,
+		Karpeg:              draft.Karpeg,
+		BirthPlace:          draft.BirthPlace,
+		BirthDate:           formatTanggalID(draft.BirthDate),
+		Pangkat:             draft.Pangkat,
+		PangkatGol:          sub.PangkatGol,
+		Jabatan:             draft.Jabatan,
+		UnitName:            sub.UnitName,
+		CurrentSalary:       sub.CurrentSalary,
+		NextSalary:          sub.NextSalary,
+		MasaKerjaLamaTahun:  derefIntPtr(draft.MKGLamaTahun),
+		MasaKerjaLamaBulan:  derefIntPtr(draft.MKGLamaBulan),
+		MasaKerjaBaruTahun:  derefIntPtr(draft.MKGBaruTahun),
+		MasaKerjaBaruBulan:  derefIntPtr(draft.MKGBaruBulan),
+		Golongan:            sub.PangkatGol,
+		ProposedTMT:         pdf.FormatTanggalID(sub.ProposedTMT),
+		NextKGBDate:         pdf.FormatTanggalID(sub.ProposedTMT.AddDate(2, 0, 0)),
+		LastSKPejabat:       draft.LastSKPejabat,
+		LastSKTanggal:       formatTanggalID(draft.LastSKTanggal),
+		LastSKNomor:         draft.LastSKNomor,
+		LastSKTMTBerlaku:    formatTanggalID(draft.LastSKTMT),
+		MasaPerjanjian:      draft.MasaPerjanjian,
+		PerpanjanganKontrak: perpanjangan,
+		SignerName:          signer.Name,
+		SignerNIP:           signerNIP,
+		SignerJob:           signerJob,
+	}
+	docx, err := pdf.RenderLetterDOCX(s.Renderer, ld)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "DOCX_RENDER_FAILED", "Draft naskah gagal dibuat.")
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="draft-SK-KGB-%d.docx"`, submissionID))
+	w.Header().Set("Content-Length", strconv.Itoa(len(docx)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(docx)
 }
 
 func (s *Server) handleLetterDownload(w http.ResponseWriter, r *http.Request) {

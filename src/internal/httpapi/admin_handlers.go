@@ -493,12 +493,13 @@ func (s *Server) handleAdminCreateUnit(w http.ResponseWriter, r *http.Request) {
 	writeData(w, 201, item)
 }
 func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
-	items, err := store.ListUsers(r.Context(), s.Pool, r.URL.Query().Get("q"))
+	page := pageFrom(r)
+	items, total, err := store.ListUsers(r.Context(), s.Pool, r.URL.Query().Get("q"), page)
 	if err != nil {
 		writeErr(w, 500, "INTERNAL", "Gagal mengambil pengguna.")
 		return
 	}
-	writeData(w, 200, items)
+	writeDataMeta(w, 200, items, map[string]any{"limit": page.Limit, "offset": page.Offset, "total": total})
 }
 func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -570,12 +571,13 @@ func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	writeData(w, 200, item)
 }
 func (s *Server) handleAdminSalaryScales(w http.ResponseWriter, r *http.Request) {
-	items, err := store.ListSalaryScales(r.Context(), s.Pool, r.URL.Query().Get("asn_type"), r.URL.Query().Get("golongan"))
+	page := pageFrom(r)
+	items, total, err := store.ListSalaryScales(r.Context(), s.Pool, r.URL.Query().Get("asn_type"), r.URL.Query().Get("golongan"), page)
 	if err != nil {
 		writeErr(w, 500, "INTERNAL", "Gagal mengambil skala gaji.")
 		return
 	}
-	writeData(w, 200, items)
+	writeDataMeta(w, 200, items, map[string]any{"limit": page.Limit, "offset": page.Offset, "total": total})
 }
 func (s *Server) handleAdminImportSalary(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxImportSize)
@@ -649,11 +651,11 @@ func (s *Server) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 		}
 		sid = &v
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, err := store.ListAuditLogs(r.Context(), s.Pool, sid, r.URL.Query().Get("action"), limit)
+	page := pageFrom(r)
+	items, total, err := store.ListAuditLogs(r.Context(), s.Pool, sid, r.URL.Query().Get("action"), page)
 	if err != nil {
 		writeErr(w, 500, "INTERNAL", "Gagal mengambil audit.")
 		return
 	}
-	writeData(w, 200, items)
+	writeDataMeta(w, 200, items, map[string]any{"limit": page.Limit, "offset": page.Offset, "total": total})
 }
