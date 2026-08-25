@@ -2,21 +2,6 @@ package letterdata
 
 import "time"
 
-// PeriodicInput adalah data yang dipakai menghitung TMT dan MKG berkala.
-type PeriodicInput struct {
-	LastTMT     time.Time
-	NewTMT      time.Time
-	LastMKGYear int
-}
-
-// PeriodicMasaKerja adalah masa kerja lama/baru yang selalu genap, 0 bulan.
-type PeriodicMasaKerja struct {
-	LamaTahun int
-	LamaBulan int
-	BaruTahun int
-	BaruBulan int
-}
-
 // EvenYear membulatkan ke bawah ke kelipatan 2 tahun. Nilai negatif jadi 0.
 func EvenYear(v int) int {
 	if v < 0 {
@@ -37,23 +22,22 @@ func NextPeriodicTMT(lastTMT, asOf time.Time) time.Time {
 	return next
 }
 
-// ComputePeriodicMasaKerja menghasilkan masa kerja lama = MKG SK terakhir
-// (genap) dan masa kerja baru = lama + 2, keduanya 0 bulan.
-func ComputePeriodicMasaKerja(in PeriodicInput) PeriodicMasaKerja {
-	lama := EvenYear(in.LastMKGYear)
-	if lama == 0 && !in.LastTMT.IsZero() && !in.NewTMT.IsZero() {
-		years := yearsBetween(in.LastTMT, in.NewTMT) - 2
-		if years < 0 {
-			years = 0
-		}
-		lama = EvenYear(years)
+// NextDueTMT menagih TMT KGB berikutnya memakai satu rumus untuk seluruh
+// sistem: anniversary dua tahunan pertama dari tmtAwal yang lebih baru dari
+// SK terakhir (KGB terakhir atau SK naik pangkat). Usulan yang terlambat
+// tidak pernah melompat ke siklus berikutnya — selama SK periode itu belum
+// terbit, TMT yang ditagih tetap anniversary periode tersebut (contoh:
+// baru diusulkan Januari 2027 tetap TMT 1 Des 2026). Bila tagihan tertinggal
+// lebih dari satu siklus penuh (hari ini sudah melewati b+2 tahun), acuan
+// digeser ke anniversary berjalan agar periode tidak menumpuk bolong.
+func NextDueTMT(tmtAwal, skTerakhir, hariIni time.Time) time.Time {
+	// NextPeriodicTMT inklusif (≥); geser satu hari agar SK terakhir yang
+	// jatuh tepat di anniversary ikut tergantikan oleh siklus berikutnya.
+	tetap := NextPeriodicTMT(tmtAwal, dateOnly(skTerakhir).AddDate(0, 0, 1))
+	if hariIni.After(tetap.AddDate(2, 0, 0)) {
+		return NextPeriodicTMT(tmtAwal, hariIni)
 	}
-	return PeriodicMasaKerja{
-		LamaTahun: lama,
-		LamaBulan: 0,
-		BaruTahun: lama + 2,
-		BaruBulan: 0,
-	}
+	return tetap
 }
 
 func yearsBetween(start, end time.Time) int {
@@ -77,21 +61,11 @@ func dateOnly(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// IsPeriodicTMT benar bila proposed adalah anniversary +2n tahun dari last.
-func IsPeriodicTMT(last, proposed time.Time) bool {
-	last = dateOnly(last)
-	proposed = dateOnly(proposed)
-	if !proposed.After(last) {
-		return false
-	}
-	cand := last.AddDate(2, 0, 0)
-	for !cand.After(proposed) {
-		if cand.Equal(proposed) {
-			return true
-		}
-		cand = cand.AddDate(2, 0, 0)
-	}
-	return false
+// MasaKerjaFromTMT menghitung masa kerja golongan dari TMT awal (CPNS atau
+// pengangkatan PPPK) sampai TMT KGB berlaku, dibulatkan ke bawah ke kelipatan
+// dua tahun. Dipakai sebagai acuan penentu gaji.
+func MasaKerjaFromTMT(tmtAwal, tmtBerlaku time.Time) int {
+	return EvenYear(yearsBetween(tmtAwal, tmtBerlaku))
 }
 
 const (

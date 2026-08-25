@@ -36,26 +36,44 @@ func TestNextPeriodicTMTDariKGBTerakhirPlusDuaTahun(t *testing.T) {
 	}
 }
 
-func TestPeriodicMasaKerjaGenapNolBulan(t *testing.T) {
-	// SK pertama 1 Des 2020 → TMT 1 Des 2026, masa kerja baru 6 th 0 bln.
-	s := ComputePeriodicMasaKerja(PeriodicInput{
-		LastTMT:     d("2020-12-01"),
-		NewTMT:      d("2026-12-01"),
-		LastMKGYear: 0,
-	})
-	if s.LamaTahun != 4 || s.LamaBulan != 0 || s.BaruTahun != 6 || s.BaruBulan != 0 {
-		t.Fatalf("mkg = %d/%d → %d/%d, ingin 4/0 → 6/0", s.LamaTahun, s.LamaBulan, s.BaruTahun, s.BaruBulan)
+func TestNextDueTMTEpatWaktuDariSKPertama(t *testing.T) {
+	// SK pengangkatan/KGB pertama 1 Des 2020, usul Agustus 2026 → 1 Des 2026.
+	got := NextDueTMT(d("2020-12-01"), d("2020-12-01"), d("2026-08-17"))
+	if !got.Equal(d("2026-12-01")) {
+		t.Fatalf("TMT = %s, ingin 2026-12-01", got.Format("2006-01-02"))
 	}
 }
 
-func TestPeriodicMasaKerjaDariKGBTerakhir(t *testing.T) {
-	s := ComputePeriodicMasaKerja(PeriodicInput{
-		LastTMT:     d("2024-12-01"),
-		NewTMT:      d("2026-12-01"),
-		LastMKGYear: 4,
-	})
-	if s.LamaTahun != 4 || s.BaruTahun != 6 || s.LamaBulan != 0 || s.BaruBulan != 0 {
-		t.Fatalf("mkg = %d/%d → %d/%d, ingin 4/0 → 6/0", s.LamaTahun, s.LamaBulan, s.BaruTahun, s.BaruBulan)
+func TestNextDueTMTTelatSatuBulanTetapDiPeriode(t *testing.T) {
+	// Lupa usul sampai Januari 2027 → tetap 1 Des 2026, TIDAK melompat ke 2028.
+	got := NextDueTMT(d("2020-12-01"), d("2024-12-01"), d("2027-01-05"))
+	if !got.Equal(d("2026-12-01")) {
+		t.Fatalf("TMT = %s, ingin 2026-12-01", got.Format("2006-01-02"))
+	}
+}
+
+func TestNextDueTMTSetelahTerbitNaikSiklus(t *testing.T) {
+	// SK KGB 1 Des 2026 sudah terbit → tagihan berikutnya 1 Des 2028.
+	got := NextDueTMT(d("2020-12-01"), d("2026-12-01"), d("2027-01-05"))
+	if !got.Equal(d("2028-12-01")) {
+		t.Fatalf("TMT = %s, ingin 2028-12-01", got.Format("2006-01-02"))
+	}
+}
+
+func TestNextDueTMTSKNaikPangkatOffGrid(t *testing.T) {
+	// SK naik pangkat 1 Jul 2026 tidak menggeser jadwal berkala.
+	got := NextDueTMT(d("2020-12-01"), d("2026-07-01"), d("2026-08-17"))
+	if !got.Equal(d("2026-12-01")) {
+		t.Fatalf("TMT = %s, ingin 2026-12-01", got.Format("2006-01-02"))
+	}
+}
+
+func TestNextDueTMTStaleDuaSiklusIkutBerjalan(t *testing.T) {
+	// Tagihan 2022 dibiarkan sampai Juni 2028 (lewat satu siklus penuh):
+	// ekspektasi bergeser ke anniversary berjalan berikutnya, 1 Des 2028.
+	got := NextDueTMT(d("2020-12-01"), d("2020-12-01"), d("2028-06-01"))
+	if !got.Equal(d("2028-12-01")) {
+		t.Fatalf("TMT = %s, ingin 2028-12-01", got.Format("2006-01-02"))
 	}
 }
 
@@ -65,15 +83,24 @@ func TestEvenYearFloor(t *testing.T) {
 	}
 }
 
-func TestIsPeriodicTMT(t *testing.T) {
-	if !IsPeriodicTMT(d("2020-12-01"), d("2026-12-01")) {
-		t.Fatal("1 Des 2020 → 1 Des 2026 harus genap")
+func TestMasaKerjaFromTMTGenapDariTMTCPNS(t *testing.T) {
+	// PNS TMT CPNS 1 Jan 2020 → TMT berlaku 1 Jan 2026 = 6 tahun genap.
+	if got := MasaKerjaFromTMT(d("2020-01-01"), d("2026-01-01")); got != 6 {
+		t.Fatalf("masa kerja = %d, ingin 6", got)
 	}
-	if IsPeriodicTMT(d("2020-12-01"), d("2026-09-01")) {
-		t.Fatal("1 Sep 2026 bukan anniversary 1 Des")
+}
+
+func TestMasaKerjaFromTMTTahunGanjilDibulatkanKeBawah(t *testing.T) {
+	// TMT CPNS 1 Jun 2021 → TMT berlaku 1 Des 2026 = 5 tahun aktual → 4 (genap).
+	if got := MasaKerjaFromTMT(d("2021-06-01"), d("2026-12-01")); got != 4 {
+		t.Fatalf("masa kerja = %d, ingin 4", got)
 	}
-	if IsPeriodicTMT(d("2020-12-01"), d("2021-12-01")) {
-		t.Fatal("jarak 1 tahun tidak genap")
+}
+
+func TestMasaKerjaFromTMTAwalSetelahBerlakuJadiNol(t *testing.T) {
+	// TMT awal setelah TMT berlaku tidak boleh menghasilkan masa kerja negatif.
+	if got := MasaKerjaFromTMT(d("2027-01-01"), d("2026-01-01")); got != 0 {
+		t.Fatalf("masa kerja = %d, ingin 0", got)
 	}
 }
 

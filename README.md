@@ -25,7 +25,7 @@ PRD  >  DATABASE ERD  >  API DOCUMENTATION  >  UI/UX  >  ARCHITECTURE  >  TECH S
 | 5. ARCHITECTURE | `docs/05-ARCHITECTURE/` | ✅ v1.2 FINAL (2026-08-16) |
 | 6. TECH STACK | `docs/06-TECH-STACK/` | ✅ v1.0 FINAL (2026-08-16) |
 | 7. IMPLEMENTASI | `src/` | ✅ vertical slice + API inti + UI + E2E lokal |
-| 8. OPERASIONAL | `deploy/` | ✅ template systemd/Nginx + backup/restore drill; cutover live menunggu otorisasi |
+| 8. OPERASIONAL | `deploy/` | ✅ LIVE — cutover ke `kgb.grobogankab.web.id` dilakukan owner (2026-08-25) |
 
 **Aturan keras:**
 - Satu fase hanya boleh dikerjakan kalau artefak fase sebelumnya sudah ada dan disetujui.

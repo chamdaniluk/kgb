@@ -177,10 +177,17 @@ func ListNominations(ctx context.Context, pool *pgxpool.Pool, role string, actor
 			last = t.LastSKTMTBerlaku
 		}
 		n := Nomination{Teacher: t}
-		if last == nil {
+		if t.TMTAwal == nil {
+			// Tanpa TMT awal tidak ada jangkar grid dua tahunan → belum lengkap.
 			n.Bucket = letterdata.BucketBelumLengkap
 		} else {
-			n.NextTMT = letterdata.NextPeriodicTMT(*last, asOf)
+			// Rumus tunggal bersama alur usulan (letterdata.NextDueTMT):
+			// anniversary setelah SK terakhir; telat tidak menggeser siklus.
+			prior := *t.TMTAwal
+			if last != nil && last.After(prior) {
+				prior = *last
+			}
+			n.NextTMT = letterdata.NextDueTMT(*t.TMTAwal, prior, asOf)
 			n.Bucket = letterdata.NominationBucket(n.NextTMT, asOf)
 		}
 		if u, ok := pending[t.ID]; ok {

@@ -91,54 +91,11 @@ func resolveKGBInputs(teacher store.Teacher, proposedMasaKerja *int, proposedTMT
 	return masaKerja, last, nil
 }
 
-func lastTMTForSchedule(teacher store.Teacher, draft store.LetterDraft, proposedLast *time.Time) *time.Time {
-	if draft.LastSKTMT != nil {
-		return draft.LastSKTMT
-	}
-	if proposedLast != nil {
-		return proposedLast
-	}
-	if teacher.TMTKGBLast != nil {
-		return teacher.TMTKGBLast
-	}
-	return teacher.LastSKTMTBerlaku
-}
-
-func lastMKGForSchedule(teacher store.Teacher, draft store.LetterDraft) int {
-	if teacher.LastSKMasaKerjaTahun != nil {
-		return *teacher.LastSKMasaKerjaTahun
-	}
-	if teacher.MasaKerjaSource == "kgb_terbit" {
-		return letterdata.EvenYear(teacher.MasaKerjaTahun)
-	}
-	return 0
-}
-
-func applyPeriodicSchedule(teacher store.Teacher, draft *store.LetterDraft, proposedLast *time.Time, asOf time.Time) (time.Time, letterdata.PeriodicMasaKerja, error) {
-	last := lastTMTForSchedule(teacher, *draft, proposedLast)
-	if last == nil {
-		return time.Time{}, letterdata.PeriodicMasaKerja{}, errors.New("TMT SK terakhir wajib diisi untuk menghitung TMT KGB genap dua tahun")
-	}
-	tmt := letterdata.NextPeriodicTMT(*last, asOf)
-	mkg := letterdata.ComputePeriodicMasaKerja(letterdata.PeriodicInput{
-		LastTMT:     *last,
-		NewTMT:      tmt,
-		LastMKGYear: lastMKGForSchedule(teacher, *draft),
-	})
-	draft.LastSKTMT = last
-	lama, baru, zero := mkg.LamaTahun, mkg.BaruTahun, 0
-	draft.MKGLamaTahun = &lama
-	draft.MKGLamaBulan = &zero
-	draft.MKGBaruTahun = &baru
-	draft.MKGBaruBulan = &zero
-	return tmt, mkg, nil
-}
-
 type preparedKGB struct {
 	ProposedTMT time.Time
 	LastTMT     *time.Time
+	TMTAwal     *time.Time
 	MasaBaru    int
-	Change      store.TeacherChange
 	Draft       store.LetterDraft
 	Current     string
 	Next        string
@@ -149,20 +106,94 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	if err != nil {
 		return preparedKGB{}, errors.New("TMT SK terakhir tidak valid")
 	}
+	// TMT awal (CPNS/pengangkatan) — acuan masa kerja & gaji, tidak dicetak.
+	tmtAwal, err := parseOptionalFormDate(firstNonEmptyForm(r, "tmt_awal"))
+	if err != nil {
+		return preparedKGB{}, errors.New("TMT awal tidak valid")
+	}
+	if tmtAwal == nil {
+		tmtAwal = t.TMTAwal
+	}
+	if tmtAwal == nil {
+		return preparedKGB{}, errors.New("TMT CPNS/pengangkatan wajib diisi sebagai acuan gaji")
+	}
 	draft, err := letterDraftFromForm(r, t, letterdata.EvenYear(t.MasaKerjaTahun))
 	if err != nil {
 		return preparedKGB{}, err
 	}
-	tmt, mkg, err := applyPeriodicSchedule(t, &draft, proposedLast, asOf)
-	if err != nil {
-		return preparedKGB{}, err
+	// Golongan editable langsung; PPPK dikunci IX. Pangkat diturunkan dari golongan.
+	formGol := strings.TrimSpace(r.FormValue("pangkat_gol"))
+	if t.ASNType == "pppk" {
+		t.PangkatGol = "IX"
+	} else if formGol != "" {
+		if !validPNSGolongan(formGol) {
+			return preparedKGB{}, errors.New("pangkat/golongan tidak valid")
+		}
+		t.PangkatGol = formGol
+		draft.Pangkat = pangkatForGolongan(formGol)
 	}
-	change, err := s.teacherChangeFromForm(r, t, tmt)
-	if err != nil {
-		return preparedKGB{}, err
+	// Jabatan wajib dari daftar jenjang fungsional guru.
+	if j := strings.TrimSpace(draft.Jabatan); j != "" && !validJabatanGuru(j) {
+		return preparedKGB{}, errors.New("jabatan harus dipilih dari daftar jenjang fungsional guru")
 	}
-	gol := salaryGolongan(t, change)
-	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, mkg.LamaTahun)
+	unitRaw := strings.TrimSpace(r.FormValue("unit_id"))
+	if unitRaw != "" {
+		uid, err := strconv.ParseInt(unitRaw, 10, 64)
+		if err != nil || uid <= 0 {
+			return preparedKGB{}, errors.New("unit kerja tidak valid")
+		}
+		u, err := store.GetUnitByID(r.Context(), s.Pool, uid)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return preparedKGB{}, errors.New("unit kerja tidak ditemukan")
+			}
+			return preparedKGB{}, err
+		}
+		switch u.Type {
+		case "sd", "tk", "smp", "skb", "dinas":
+		default:
+			return preparedKGB{}, errors.New("unit kerja harus unit layanan, bukan Korwil")
+		}
+		t.UnitID = u.ID
+		t.UnitName = u.Name
+	}
+	// Satu hitungan untuk seluruh sistem (letterdata.NextDueTMT): TMT KGB
+	// ditagih dari grid dua tahunan TMT awal, dimulai setelah SK terakhir.
+	// Usulan telat tidak menggeser TMT ke siklus berikutnya selama SK periode
+	// itu belum terbit. last_sk_tmt juga tetap dicetak sebagai naskah SK lama.
+	if draft.LastSKTMT == nil {
+		if proposedLast != nil {
+			draft.LastSKTMT = proposedLast
+		} else if t.LastSKTMTBerlaku != nil {
+			draft.LastSKTMT = t.LastSKTMTBerlaku
+		} else if t.TMTKGBLast != nil {
+			draft.LastSKTMT = t.TMTKGBLast
+		}
+	}
+	prior := *tmtAwal
+	if draft.LastSKTMT != nil && draft.LastSKTMT.After(*tmtAwal) {
+		prior = *draft.LastSKTMT
+	}
+	tmt := letterdata.NextDueTMT(*tmtAwal, prior, asOf)
+	if tmtAwal.After(tmt) {
+		return preparedKGB{}, errors.New("TMT awal tidak boleh setelah TMT KGB berlaku")
+	}
+	// Masa kerja golongan dihitung dari TMT awal → TMT berlaku; baru = masa ke TMT berlaku.
+	masaBaru := letterdata.MasaKerjaFromTMT(*tmtAwal, tmt)
+	masaLama := masaBaru - 2
+	if masaLama < 0 {
+		masaLama = 0
+	}
+	lama, baru, zero := masaLama, masaBaru, 0
+	draft.MKGLamaTahun = &lama
+	draft.MKGLamaBulan = &zero
+	draft.MKGBaruTahun = &baru
+	draft.MKGBaruBulan = &zero
+	gol := t.PangkatGol
+	if t.ASNType == "pppk" {
+		gol = "IX"
+	}
+	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, masaLama)
 	if err != nil {
 		return preparedKGB{}, err
 	}
@@ -172,8 +203,8 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	return preparedKGB{
 		ProposedTMT: tmt,
 		LastTMT:     draft.LastSKTMT,
-		MasaBaru:    mkg.BaruTahun,
-		Change:      change,
+		TMTAwal:     tmtAwal,
+		MasaBaru:    masaBaru,
 		Draft:       draft,
 		Current:     current,
 		Next:        next,
@@ -354,135 +385,6 @@ func derefIntPtr(v *int) int {
 	return *v
 }
 
-// ProposedTeacherChangeInput adalah field perubahan kepegawaian yang boleh
-// diusulkan ASN berdasarkan SK. Identitas BKN tidak termasuk di sini.
-type ProposedTeacherChangeInput struct {
-	PangkatGol    string
-	Pangkat       string
-	Jabatan       string
-	UnitID        *int64
-	EffectiveDate *time.Time
-	Note          string
-}
-
-// resolveTeacherChange memvalidasi perubahan kepegawaian dan membuat detail
-// audit sebelum submission disimpan. Unit Korwil tidak boleh menjadi tujuan
-// mutasi; tujuan harus unit layanan yang dapat menerima antrean verifikasi.
-func resolveTeacherChange(teacher store.Teacher, input ProposedTeacherChangeInput, targetUnit *store.Unit, proposedTMT time.Time) (store.TeacherChange, error) {
-	input.PangkatGol = strings.TrimSpace(input.PangkatGol)
-	input.Pangkat = strings.TrimSpace(input.Pangkat)
-	input.Jabatan = strings.TrimSpace(input.Jabatan)
-	input.Note = strings.TrimSpace(input.Note)
-	hasChange := input.PangkatGol != "" || input.Pangkat != "" || input.Jabatan != "" || input.UnitID != nil
-	if !hasChange {
-		if input.EffectiveDate != nil || input.Note != "" {
-			return store.TeacherChange{}, errors.New("tanggal dan catatan hanya boleh diisi bersama perubahan data")
-		}
-		return store.TeacherChange{}, nil
-	}
-	if input.EffectiveDate == nil {
-		return store.TeacherChange{}, errors.New("tanggal mulai berlaku pada SK wajib diisi")
-	}
-	if input.EffectiveDate.After(proposedTMT) {
-		return store.TeacherChange{}, errors.New("tanggal mulai berlaku perubahan tidak boleh setelah TMT usulan KGB")
-	}
-	if input.Note == "" {
-		return store.TeacherChange{}, errors.New("catatan perubahan wajib diisi")
-	}
-	if len(input.Note) > 1000 || len(input.PangkatGol) > 100 || len(input.Pangkat) > 200 || len(input.Jabatan) > 200 {
-		return store.TeacherChange{}, errors.New("data perubahan terlalu panjang")
-	}
-	if input.UnitID != nil {
-		if targetUnit == nil || targetUnit.ID != *input.UnitID {
-			return store.TeacherChange{}, errors.New("unit tujuan tidak ditemukan")
-		}
-		switch targetUnit.Type {
-		case "sd", "tk", "smp", "skb", "dinas":
-		default:
-			return store.TeacherChange{}, errors.New("unit tujuan harus unit layanan, bukan Korwil")
-		}
-	}
-	if input.PangkatGol != "" && teacher.ASNType == "pppk" && input.PangkatGol != "IX" {
-		return store.TeacherChange{}, errors.New("golongan PPPK harus IX")
-	}
-	change := store.TeacherChange{
-		EffectiveDate: input.EffectiveDate,
-		Note:          input.Note,
-		AuditDetails:  make(map[string]any),
-	}
-	if input.PangkatGol != "" && input.PangkatGol != teacher.PangkatGol {
-		value := input.PangkatGol
-		change.PangkatGol = &value
-		change.AuditDetails["pangkat_gol_lama"] = teacher.PangkatGol
-		change.AuditDetails["pangkat_gol_baru"] = value
-	}
-	if input.Pangkat != "" && input.Pangkat != teacher.Pangkat {
-		value := input.Pangkat
-		change.Pangkat = &value
-		change.AuditDetails["pangkat_lama"] = teacher.Pangkat
-		change.AuditDetails["pangkat_baru"] = value
-	}
-	if input.Jabatan != "" && input.Jabatan != teacher.Jabatan {
-		value := input.Jabatan
-		change.Jabatan = &value
-		change.AuditDetails["jabatan_lama"] = teacher.Jabatan
-		change.AuditDetails["jabatan_baru"] = value
-	}
-	if input.UnitID != nil && *input.UnitID != teacher.UnitID {
-		value := *input.UnitID
-		change.UnitID = &value
-		change.AuditDetails["unit_lama"] = teacher.UnitName
-		change.AuditDetails["unit_baru"] = targetUnit.Name
-	}
-	if len(change.AuditDetails) == 0 {
-		return store.TeacherChange{}, errors.New("tidak ada perubahan data yang berbeda dari master BKN")
-	}
-	change.AuditDetails["tanggal_berlaku"] = input.EffectiveDate.Format("2006-01-02")
-	change.AuditDetails["catatan"] = input.Note
-	return change, nil
-}
-
-func (s *Server) teacherChangeFromForm(r *http.Request, teacher store.Teacher, proposedTMT time.Time) (store.TeacherChange, error) {
-	unitID, err := parseOptionalFormInt64(r.FormValue("change_unit_id"))
-	if err != nil {
-		return store.TeacherChange{}, err
-	}
-	var targetUnit *store.Unit
-	if unitID != nil {
-		unit, err := store.GetUnitByID(r.Context(), s.Pool, *unitID)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				return store.TeacherChange{}, errors.New("unit tujuan tidak ditemukan")
-			}
-			return store.TeacherChange{}, err
-		}
-		targetUnit = &unit
-	}
-	effectiveDate, err := parseOptionalEffectiveDate(r.FormValue("change_effective_date"))
-	if err != nil {
-		return store.TeacherChange{}, err
-	}
-	return resolveTeacherChange(teacher, ProposedTeacherChangeInput{
-		PangkatGol:    r.FormValue("change_pangkat_gol"),
-		Pangkat:       r.FormValue("change_pangkat"),
-		Jabatan:       r.FormValue("change_jabatan"),
-		UnitID:        unitID,
-		EffectiveDate: effectiveDate,
-		Note:          r.FormValue("change_note"),
-	}, targetUnit, proposedTMT)
-}
-
-func salaryGolongan(teacher store.Teacher, change store.TeacherChange) string {
-	gol := teacher.PangkatGol
-	if change.PangkatGol != nil {
-		gol = *change.PangkatGol
-	}
-	if teacher.ASNType == "pppk" {
-		return "IX"
-	}
-	return gol
-}
-
 func (s *Server) canAccessSubmission(r *http.Request, sub store.Submission) bool {
 	u := userFrom(r)
 	switch u.Role {
@@ -519,6 +421,58 @@ func (s *Server) handleListSubmissions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeData(w, http.StatusOK, items)
+}
+
+// handleSalaryPreview menghitung gaji lama/baru dan masa kerja untuk pratinjau
+// form usul, memakai TMT awal (acuan) sampai TMT KGB berlaku. Read-only.
+func (s *Server) handleSalaryPreview(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.teacherForUser(r)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "TEACHER_NOT_FOUND", "Data kepegawaian tidak ditemukan.")
+		return
+	}
+	q := r.URL.Query()
+	tmtAwal, err := parseOptionalFormDate(q.Get("tmt_awal"))
+	if err != nil || tmtAwal == nil {
+		writeErr(w, http.StatusUnprocessableEntity, "TMT_AWAL_REQUIRED", "TMT CPNS/pengangkatan wajib diisi.")
+		return
+	}
+	// Rumus sama dengan submit (letterdata.NextDueTMT): anniversary setelah
+	// SK terakhir di grid TMT awal; usulan telat tidak menggeser siklus.
+	prior := *tmtAwal
+	if v, errP := parseOptionalFormDate(q.Get("last_sk_tmt")); errP == nil && v != nil && v.After(*tmtAwal) {
+		prior = *v
+	}
+	tmtBerlaku := letterdata.NextDueTMT(*tmtAwal, prior, time.Now())
+	if tmtAwal.After(tmtBerlaku) {
+		writeErr(w, http.StatusUnprocessableEntity, "INVALID_TMT", "TMT awal tidak boleh setelah TMT berlaku.")
+		return
+	}
+	gol := strings.TrimSpace(q.Get("golongan"))
+	if t.ASNType == "pppk" {
+		gol = "IX"
+	} else if gol == "" || !validPNSGolongan(gol) {
+		writeErr(w, http.StatusUnprocessableEntity, "INVALID_GOLONGAN", "Golongan tidak valid.")
+		return
+	}
+	masaBaru := letterdata.MasaKerjaFromTMT(*tmtAwal, tmtBerlaku)
+	masaLama := masaBaru - 2
+	if masaLama < 0 {
+		masaLama = 0
+	}
+	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, masaLama)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND", "Kombinasi golongan/masa kerja tidak ada di skala gaji.")
+		return
+	}
+	writeData(w, http.StatusOK, map[string]any{
+		"current_salary":   current,
+		"next_salary":      next,
+		"mkg_lama_tahun":   masaLama,
+		"mkg_baru_tahun":   masaBaru,
+		"tmt_berlaku":      tmtBerlaku.Format("2006-01-02"),
+		"pangkat":          pangkatForGolongan(gol),
+	})
 }
 
 func (s *Server) handleGetSubmission(w http.ResponseWriter, r *http.Request) {
@@ -604,7 +558,19 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 	}
 	draft := prep.Draft
 	effectiveMasaKerja := prep.MasaBaru
-	sub, err := store.CreateSubmission(r.Context(), s.Pool, t.ID, userFrom(r).ID, prep.ProposedTMT, &effectiveMasaKerja, prep.LastTMT, prep.Change, draft, prep.Current, prep.Next, files.OriginalName(header.Filename), path, size, clientIP(r))
+	// Reuse existing proposed_* columns to persist golongan/unit yang dipilih di form
+	// (semantics now: nilai efektif form, bukan 'change'); isi via TeacherChange minimal agar tetap kompatibel dengan store
+	formGol := strings.TrimSpace(r.FormValue("pangkat_gol"))
+	var cg store.TeacherChange
+	if formGol != "" {
+		cg.PangkatGol = &formGol
+	}
+	if uidRaw := strings.TrimSpace(r.FormValue("unit_id")); uidRaw != "" {
+		if uid, err2 := strconv.ParseInt(uidRaw, 10, 64); err2 == nil && uid > 0 {
+			cg.UnitID = &uid
+		}
+	}
+	sub, err := store.CreateSubmission(r.Context(), s.Pool, t.ID, userFrom(r).ID, prep.ProposedTMT, &effectiveMasaKerja, prep.LastTMT, prep.TMTAwal, cg, draft, prep.Current, prep.Next, files.OriginalName(header.Filename), path, size, clientIP(r))
 	if err != nil {
 		_ = s.Files.Remove(path)
 		if mapStoreError(w, err) {
@@ -668,7 +634,17 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	draft := prep.Draft
 	effectiveMasaKerja := prep.MasaBaru
-	sub, err := store.Resubmit(r.Context(), s.Pool, id, userFrom(r).ID, prep.ProposedTMT, &effectiveMasaKerja, prep.LastTMT, prep.Change, draft, prep.Current, prep.Next, filepath.Base(header.Filename), path, size, clientIP(r))
+	formGol2 := strings.TrimSpace(r.FormValue("pangkat_gol"))
+	var cg2 store.TeacherChange
+	if formGol2 != "" {
+		cg2.PangkatGol = &formGol2
+	}
+	if uidRaw2 := strings.TrimSpace(r.FormValue("unit_id")); uidRaw2 != "" {
+		if uid2, err2 := strconv.ParseInt(uidRaw2, 10, 64); err2 == nil && uid2 > 0 {
+			cg2.UnitID = &uid2
+		}
+	}
+	sub, err := store.Resubmit(r.Context(), s.Pool, id, userFrom(r).ID, prep.ProposedTMT, &effectiveMasaKerja, prep.LastTMT, prep.TMTAwal, cg2, draft, prep.Current, prep.Next, filepath.Base(header.Filename), path, size, clientIP(r))
 	if err != nil {
 		_ = s.Files.Remove(path)
 		if mapStoreError(w, err) {

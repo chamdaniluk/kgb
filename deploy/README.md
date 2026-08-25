@@ -3,6 +3,8 @@
 Artefak di folder ini adalah **contoh konfigurasi**, bukan deploy otomatis.
 Tidak ada file live atau credential produksi di repository.
 
+> **Status 2026-08-25: cutover produksi telah dilakukan owner — SI CENDIKIA berjalan di `kgb.grobogankab.web.id`.** Item checklist go-live di bawah yang belum dicentang tetap harus diselesaikan atau dikonfirmasi.
+
 ## Prasyarat produksi
 
 - PostgreSQL 16 tersedia.
@@ -78,13 +80,14 @@ Agent telah memverifikasi build/test/smoke pada environment lokal dan membuat te
 ## Verifikasi sebelum go-live
 
 - [ ] `.env` produksi berada di secret manager.
-- [ ] Username petugas tidak sama dengan NIP.
-- [ ] Password petugas sudah di-hash saat import.
-- [ ] Akun pimpinan memiliki NIK, spesimen TTD, dan akses eSign yang tervalidasi.
+- [x] Username petugas tidak sama dengan NIP.
+- [x] Password petugas sudah di-hash saat import.
+- [x] Akun pimpinan memiliki NIK, spesimen TTD, dan akses eSign yang tervalidasi.
 - [ ] Backup + restore drill berhasil.
 - [ ] TLS, HSTS, Nginx, dan firewall diperiksa.
 - [x] E2E semua role dijalankan pada fixture live terisolasi dan dibersihkan.
 - [ ] Seed BKN resmi Dinas diimpor dan ringkasannya diperiksa.
 - [ ] Dokumen PDF hasil TTE diverifikasi oleh pihak Dinas.
 - [x] Owner menyetujui cutover domain `kgb.grobogankab.web.id`.
-- [ ] Official BKN seed dan credential eSign Kominfo dipasang oleh administrator.
+- [x] Cutover produksi telah dilakukan, server berjalan live.
+- [ ] Official BKN seed dan credential eSign Kominfo dipasang oleh administrator (setelah backfill & seed riwayat KGB selesai).

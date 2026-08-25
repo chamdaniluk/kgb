@@ -145,7 +145,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		me := map[string]any{
-			"nip": t.NIP, "asn_type": t.ASNType, "unit": t.UnitName,
+			"nip": t.NIP, "asn_type": t.ASNType, "unit": t.UnitName, "unit_id": t.UnitID,
 			"pangkat_gol": t.PangkatGol, "pangkat": t.Pangkat, "jabatan": t.Jabatan,
 			"masa_kerja_tahun": t.MasaKerjaTahun, "masa_kerja_source": t.MasaKerjaSource,
 			"birth_place": t.BirthPlace, "karpeg": t.Karpeg,
@@ -170,33 +170,50 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		if t.ASNType == "pppk" {
 			gol = "IX" // guru PPPK selalu IX (ERD §7a)
 		}
-		if t.MasaKerjaSource != "belum_tersedia" {
-			cur, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, t.MasaKerjaTahun)
-			if err != nil {
-				writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND",
-					"Kombinasi golongan/masa kerja tidak ada di skala gaji. Hubungi Dinas.")
-				return
+		if t.TMTAwal != nil {
+			me["tmt_awal"] = t.TMTAwal.Format("2006-01-02")
+		}
+		// Rumus tunggal jadwal KGB (letterdata.NextDueTMT): anniversary
+		// setelah SK terakhir di grid TMT awal; telat tidak menggeser siklus.
+		var tmtBerlaku time.Time
+		if t.TMTAwal != nil {
+			prior := *t.TMTAwal
+			if t.LastSKTMTBerlaku != nil && t.LastSKTMTBerlaku.After(prior) {
+				prior = *t.LastSKTMTBerlaku
 			}
-			me["gaji_sekarang"] = cur
-			me["gaji_berikutnya"] = next
-		} else {
-			me["data_perlu_dilengkapi"] = true
+			if t.TMTKGBLast != nil && t.TMTKGBLast.After(prior) {
+				prior = *t.TMTKGBLast
+			}
+			tmtBerlaku = letterdata.NextDueTMT(*t.TMTAwal, prior, time.Now())
+			me["proposed_tmt"] = tmtBerlaku.Format("2006-01-02")
 		}
 		if t.TMTKGBLast != nil {
 			me["tmt_kgb_last"] = t.TMTKGBLast.Format("2006-01-02")
-			nextTMT := letterdata.NextPeriodicTMT(*t.TMTKGBLast, time.Now())
-			me["proposed_tmt"] = nextTMT.Format("2006-01-02")
-			mkgYear := t.MasaKerjaTahun
-			if t.LastSKMasaKerjaTahun != nil {
-				mkgYear = *t.LastSKMasaKerjaTahun
+		}
+		// Pra-isi gaji & masa kerja dari TMT awal → TMT berlaku (jalur B).
+		// Tanpa TMT awal jangan menebak — tandai perlu dilengkapi.
+		if t.TMTAwal != nil && t.MasaKerjaSource != "belum_tersedia" {
+			masaBaru := letterdata.MasaKerjaFromTMT(*t.TMTAwal, tmtBerlaku)
+			masaLama := masaBaru - 2
+			if masaLama < 0 {
+				masaLama = 0
 			}
-			mkg := letterdata.ComputePeriodicMasaKerja(letterdata.PeriodicInput{
-				LastTMT: *t.TMTKGBLast, NewTMT: nextTMT, LastMKGYear: mkgYear,
-			})
-			me["mkg_lama_tahun"] = mkg.LamaTahun
-			me["mkg_lama_bulan"] = 0
-			me["mkg_baru_tahun"] = mkg.BaruTahun
-			me["mkg_baru_bulan"] = 0
+			cur, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, masaLama)
+			if err != nil {
+				// Skala tak ketemu bukan alasan menggagalkan /me: dasbor tetap
+				// dimuat, gaji dikosongkan, dan salary-preview menampilkan pesan
+				// yang tepat saat guru mengisi form.
+				me["data_perlu_dilengkapi"] = true
+			} else {
+				me["gaji_sekarang"] = cur
+				me["gaji_berikutnya"] = next
+				me["mkg_lama_tahun"] = masaLama
+				me["mkg_lama_bulan"] = 0
+				me["mkg_baru_tahun"] = masaLama + 2
+				me["mkg_baru_bulan"] = 0
+			}
+		} else {
+			me["data_perlu_dilengkapi"] = true
 		}
 		out["teacher"] = me
 	}
