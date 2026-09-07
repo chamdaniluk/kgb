@@ -44,7 +44,7 @@ func ListUsers(ctx context.Context, pool *pgxpool.Pool, q string, page Page) ([]
 }
 
 // CreateStaffUser membuat akun petugas dan menolak username yang sama dengan NIP.
-func CreateStaffUser(ctx context.Context, pool *pgxpool.Pool, username, passwordHash, role, name string, unitID *int64, nik, signature string) (UserSummary, error) {
+func CreateStaffUser(ctx context.Context, pool *pgxpool.Pool, username, passwordHash, role, name string, unitID *int64, nik, signature, employeeNumber, jobTitle string) (UserSummary, error) {
 	if role == "asn" {
 		return UserSummary{}, errors.New("akun ASN dibuat melalui impor BKN")
 	}
@@ -53,6 +53,9 @@ func CreateStaffUser(ctx context.Context, pool *pgxpool.Pool, username, password
 	}
 	if !IsStaffRole(role) {
 		return UserSummary{}, errors.New("role petugas tidak valid")
+	}
+	if role == StaffRoleVerifikatorUnit && unitID == nil {
+		return UserSummary{}, errors.New("verifikator unit wajib memiliki unit kerja")
 	}
 	if name == "" {
 		name = username
@@ -70,9 +73,9 @@ func CreateStaffUser(ctx context.Context, pool *pgxpool.Pool, username, password
 	}
 	var u UserSummary
 	err := pool.QueryRow(ctx, `
-		INSERT INTO users (username,password_hash,role,name,unit_id,nik,signature_image_base64,is_active)
-		VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),$8)
-		RETURNING id, username, role, name, unit_id, (SELECT name FROM units WHERE id=users.unit_id), is_active, last_login_at`, username, passwordHash, role, name, unitID, nik, signature, active).
+		INSERT INTO users (username,password_hash,role,name,unit_id,nik,signature_image_base64,employee_number,job_title,is_active)
+		VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),$10)
+		RETURNING id, username, role, name, unit_id, (SELECT name FROM units WHERE id=users.unit_id), is_active, last_login_at`, username, passwordHash, role, name, unitID, nik, signature, employeeNumber, jobTitle, active).
 		Scan(&u.ID, &u.Username, &u.Role, &u.Name, &u.UnitID, &u.UnitName, &u.IsActive, &u.LastLogin)
 	if IsUniqueViolation(err) {
 		return UserSummary{}, ErrConflict
@@ -93,7 +96,7 @@ func derefOptional(value *string) string {
 }
 
 // UpdateStaffUser memperbarui data akun petugas; nil berarti tidak mengubah field.
-func UpdateStaffUser(ctx context.Context, pool *pgxpool.Pool, id int64, name *string, role *string, unitID **int64, active *bool, passwordHash *string, nik *string, signature *string) (UserSummary, error) {
+func UpdateStaffUser(ctx context.Context, pool *pgxpool.Pool, id int64, name *string, role *string, unitID **int64, active *bool, passwordHash *string, nik *string, signature *string, employeeNumber *string, jobTitle *string) (UserSummary, error) {
 	if role != nil && !IsStaffRole(*role) {
 		return UserSummary{}, errors.New("role petugas tidak valid")
 	}
@@ -150,6 +153,14 @@ func UpdateStaffUser(ctx context.Context, pool *pgxpool.Pool, id int64, name *st
 	if signature != nil {
 		signatureValue = nullIfEmpty(*signature)
 	}
+	var employeeNumberValue any
+	if employeeNumber != nil {
+		employeeNumberValue = nullIfEmpty(*employeeNumber)
+	}
+	var jobTitleValue any
+	if jobTitle != nil {
+		jobTitleValue = nullIfEmpty(*jobTitle)
+	}
 	var unitValue any
 	if unitID != nil {
 		unitValue = *unitID
@@ -158,10 +169,13 @@ func UpdateStaffUser(ctx context.Context, pool *pgxpool.Pool, id int64, name *st
 		UPDATE users SET
 			name=COALESCE($1,name), role=COALESCE($2,role), unit_id=CASE WHEN $3::boolean THEN $4::int ELSE unit_id END,
 			is_active=COALESCE($5,is_active), password_hash=COALESCE($6,password_hash), nik=CASE WHEN $7::boolean THEN $8::text ELSE nik END,
-			signature_image_base64=CASE WHEN $9::boolean THEN $10::text ELSE signature_image_base64 END, updated_at=now()
-		WHERE id=$11 AND role <> 'asn'
+			signature_image_base64=CASE WHEN $9::boolean THEN $10::text ELSE signature_image_base64 END,
+			employee_number=CASE WHEN $11::boolean THEN $12::text ELSE employee_number END,
+			job_title=CASE WHEN $13::boolean THEN $14::text ELSE job_title END, updated_at=now()
+		WHERE id=$15 AND role <> 'asn'
 		RETURNING id, username, role, name, unit_id, (SELECT name FROM units WHERE id=users.unit_id), is_active, last_login_at`,
-		nameValue, roleValue, unitID != nil, unitValue, activeValue, passwordChanged, nik != nil, nikValue, signature != nil, signatureValue, id).
+		nameValue, roleValue, unitID != nil, unitValue, activeValue, passwordChanged, nik != nil, nikValue, signature != nil, signatureValue,
+		employeeNumber != nil, employeeNumberValue, jobTitle != nil, jobTitleValue, id).
 		Scan(&u.ID, &u.Username, &u.Role, &u.Name, &u.UnitID, &u.UnitName, &u.IsActive, &u.LastLogin)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return UserSummary{}, ErrNotFound

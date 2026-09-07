@@ -25,6 +25,10 @@ import (
 )
 
 func TestAlurLengkapPengajuanSampaiTerbit(t *testing.T) {
+	// Skip pada mesin tanpa LibreOffice/soffice (mis. Windows dev) — tidak ada binary PDF.
+	if bin := pdf.NewRenderer().Binary; bin == "" {
+		t.Skip("LibreOffice/soffice tidak tersedia — skip e2e PDF sign (opsional lokal)")
+	}
 	fx := newFixture(t)
 	fx.srv.Close()
 	ctx := context.Background()
@@ -229,6 +233,16 @@ func submitPDF(t *testing.T, client *http.Client, base, csrf, date string) (*htt
 	_ = writer.WriteField("last_sk_tanggal", "2024-04-01")
 	_ = writer.WriteField("last_sk_nomor", "800/010/4.2/2024")
 	_ = writer.WriteField("last_sk_tmt", "2024-04-01")
+	_ = writer.WriteField("last_kgb_golongan", "III/b")
+	_ = writer.WriteField("last_kgb_masa_tahun", "10")
+	_ = writer.WriteField("last_kgb_masa_bulan", "0")
+	_ = writer.WriteField("last_kp_golongan", "III/b")
+	_ = writer.WriteField("last_kp_tmt", "2024-04-01")
+	_ = writer.WriteField("last_kp_masa_tahun", "10")
+	_ = writer.WriteField("last_kp_masa_bulan", "0")
+	_ = writer.WriteField("last_kp_nomor", "800.1.3.2/795/2024")
+	_ = writer.WriteField("last_kp_tanggal", "2024-03-20")
+	_ = writer.WriteField("last_kp_pejabat", "BUPATI GROBOGAN")
 	_ = writer.WriteField("mkg_lama_tahun", "10")
 	_ = writer.WriteField("mkg_lama_bulan", "0")
 	_ = writer.WriteField("mkg_baru_tahun", "12")
@@ -372,12 +386,13 @@ func TestSubmitTanpaKarpegDitolak(t *testing.T) {
 func TestSubmitMenghitungTMTGenapDariSKPertama(t *testing.T) {
 	fx := newFixture(t)
 	ctx := context.Background()
-	if _, err := fx.pool.Exec(ctx, `UPDATE teachers SET tmt_kgb_last='2020-12-01', last_sk_tmt_berlaku='2020-12-01', masa_kerja_source='tmt_cpns' WHERE nip=$1`, nipPNS); err != nil {
+	if _, err := fx.pool.Exec(ctx, `UPDATE teachers SET tmt_kgb_last='2020-12-01', last_sk_tmt_berlaku='2020-12-01', masa_kerja_source='tmt_cpns', tmt_awal='2020-12-01' WHERE nip=$1`, nipPNS); err != nil {
 		t.Fatal(err)
 	}
 	client, csrf := loginClient(t, fx.srv.URL, nipPNS, nipPNS)
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("tmt_awal", "2020-12-01")
 	_ = writer.WriteField("birth_place", "Grobogan")
 	_ = writer.WriteField("birth_date", "1980-01-01")
 	_ = writer.WriteField("karpeg", "I 123456")
@@ -387,6 +402,16 @@ func TestSubmitMenghitungTMTGenapDariSKPertama(t *testing.T) {
 	_ = writer.WriteField("last_sk_tanggal", "2020-12-01")
 	_ = writer.WriteField("last_sk_nomor", "800/001/4.2/2020")
 	_ = writer.WriteField("last_sk_tmt", "2020-12-01")
+	_ = writer.WriteField("last_kgb_golongan", "III/b")
+	_ = writer.WriteField("last_kgb_masa_tahun", "4")
+	_ = writer.WriteField("last_kgb_masa_bulan", "0")
+	_ = writer.WriteField("last_kp_golongan", "III/b")
+	_ = writer.WriteField("last_kp_tmt", "2020-12-01")
+	_ = writer.WriteField("last_kp_masa_tahun", "4")
+	_ = writer.WriteField("last_kp_masa_bulan", "0")
+	_ = writer.WriteField("last_kp_nomor", "800.1.3.2/795/2020")
+	_ = writer.WriteField("last_kp_tanggal", "2020-11-20")
+	_ = writer.WriteField("last_kp_pejabat", "BUPATI GROBOGAN")
 	part, err := writer.CreateFormFile("file", "dukungan.pdf")
 	if err != nil {
 		t.Fatal(err)
@@ -426,6 +451,70 @@ func TestSubmitMenghitungTMTGenapDariSKPertama(t *testing.T) {
 	}
 	if fmt.Sprint(envelope.Data["draft_mkg_lama_bulan"]) != "0" || fmt.Sprint(envelope.Data["draft_mkg_baru_bulan"]) != "0" {
 		t.Fatalf("bulan mkg harus 0: %v / %v", envelope.Data["draft_mkg_lama_bulan"], envelope.Data["draft_mkg_baru_bulan"])
+	}
+}
+
+func TestSKNaikPangkatTidakMenggeserTMTKGB(t *testing.T) {
+	fx := newFixture(t)
+	ctx := context.Background()
+	if _, err := fx.pool.Exec(ctx, `UPDATE teachers SET tmt_kgb_last='2020-12-01', last_sk_tmt_berlaku='2026-07-01', masa_kerja_source='tmt_cpns', tmt_awal='2020-12-01' WHERE nip=$1`, nipPNS); err != nil {
+		t.Fatal(err)
+	}
+	client, csrf := loginClient(t, fx.srv.URL, nipPNS, nipPNS)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("tmt_awal", "2020-12-01")
+	_ = writer.WriteField("birth_place", "Grobogan")
+	_ = writer.WriteField("birth_date", "1980-01-01")
+	_ = writer.WriteField("karpeg", "I 123456")
+	_ = writer.WriteField("pangkat", "Penata")
+	_ = writer.WriteField("jabatan", "Guru Ahli Pertama")
+	_ = writer.WriteField("last_sk_pejabat", "Kepala Dinas Pendidikan")
+	_ = writer.WriteField("last_sk_tanggal", "2026-07-01")
+	_ = writer.WriteField("last_sk_nomor", "800/099/4.2/2026")
+	_ = writer.WriteField("last_sk_tmt", "2026-07-01")
+	_ = writer.WriteField("last_kgb_golongan", "III/b")
+	_ = writer.WriteField("last_kgb_masa_tahun", "6")
+	_ = writer.WriteField("last_kgb_masa_bulan", "0")
+	_ = writer.WriteField("last_kp_golongan", "III/b")
+	_ = writer.WriteField("last_kp_tmt", "2026-07-01")
+	_ = writer.WriteField("last_kp_masa_tahun", "6")
+	_ = writer.WriteField("last_kp_masa_bulan", "0")
+	_ = writer.WriteField("last_kp_nomor", "800.1.3.2/795/2026")
+	_ = writer.WriteField("last_kp_tanggal", "2026-06-20")
+	_ = writer.WriteField("last_kp_pejabat", "BUPATI GROBOGAN")
+	part, err := writer.CreateFormFile("file", "dukungan.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte("%PDF-1.4\n% test\n"))
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, fx.srv.URL+"/api/v1/submissions", &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-CSRF-Token", csrf)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var envelope struct {
+		Data  map[string]any `json:"data"`
+		Error map[string]any `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("submit status=%d body=%v", resp.StatusCode, envelope.Error)
+	}
+	if !strings.HasPrefix(fmt.Sprint(envelope.Data["proposed_tmt"]), "2026-12-01") {
+		t.Fatalf("proposed_tmt SK naik pangkat Jul 2026 seharusnya tetap 2026-12-01 (jangkar tmt_awal), dapat %v", envelope.Data["proposed_tmt"])
 	}
 }
 

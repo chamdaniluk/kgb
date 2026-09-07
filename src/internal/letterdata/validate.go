@@ -12,6 +12,7 @@ import (
 var ErrDraftIncomplete = errors.New("naskah SK belum lengkap")
 
 // Draft adalah nilai naskah yang akan dicetak ke template DOCX.
+// Seluruh kolom bersifat wajib: KP terakhir, KGB terakhir, dan naskah SK.
 type Draft struct {
 	ASNType          string
 	BirthPlace       string
@@ -24,6 +25,15 @@ type Draft struct {
 	LastSKNomor      string
 	LastSKTanggal    *time.Time
 	LastSKTMT        *time.Time
+	LastSKMasaTahun  *int
+	LastSKMasaBulan  *int
+	LastKPGolongan   string
+	LastKPTMT        *time.Time
+	LastKPMasaTahun  *int
+	LastKPMasaBulan  *int
+	LastKPNomor      string
+	LastKPTanggal    *time.Time
+	LastKPPejabat    string
 	MKGLamaTahun     int
 	MKGLamaBulan     int
 	MKGBaruTahun     int
@@ -70,6 +80,20 @@ func requiredYear(label string, v int) error {
 	return nil
 }
 
+func requiredYearPtr(label string, v *int) error {
+	if v == nil || *v < 0 {
+		return fmt.Errorf("%w: %s wajib diisi", ErrDraftIncomplete, label)
+	}
+	return nil
+}
+
+func requiredMonthPtr(label string, v *int) error {
+	if v == nil || *v < 0 || *v > 11 {
+		return fmt.Errorf("%w: %s wajib diisi 0–11", ErrDraftIncomplete, label)
+	}
+	return nil
+}
+
 // ValidateDraft menolak naskah yang masih bolong atau memakai placeholder strip.
 func ValidateDraft(d Draft) error {
 	asn := strings.ToLower(Normalize(d.ASNType))
@@ -82,10 +106,19 @@ func ValidateDraft(d Draft) error {
 		requiredString("Pangkat", d.Pangkat),
 		requiredString("Jabatan", d.Jabatan),
 		requiredString("Unit kerja", d.UnitName),
+		requiredString("Golongan KP", d.LastKPGolongan),
+		requiredDate("TMT KP", d.LastKPTMT),
+		requiredYearPtr("Masa kerja KP (tahun)", d.LastKPMasaTahun),
+		requiredMonthPtr("Masa kerja KP (bulan)", d.LastKPMasaBulan),
+		requiredString("Nomor SK KP", d.LastKPNomor),
+		requiredDate("Tanggal SK KP", d.LastKPTanggal),
+		requiredString("Pejabat SK KP", d.LastKPPejabat),
 		requiredString("Pejabat SK terakhir", d.LastSKPejabat),
 		requiredString("Nomor SK terakhir", d.LastSKNomor),
 		requiredDate("Tanggal SK terakhir", d.LastSKTanggal),
 		requiredDate("TMT SK terakhir", d.LastSKTMT),
+		requiredYearPtr("Masa kerja KGB (tahun)", d.LastSKMasaTahun),
+		requiredMonthPtr("Masa kerja KGB (bulan)", d.LastSKMasaBulan),
 		requiredYear("Masa kerja lama (tahun)", d.MKGLamaTahun),
 		requiredMonth("Masa kerja lama (bulan)", d.MKGLamaBulan),
 		requiredYear("Masa kerja baru (tahun)", d.MKGBaruTahun),
@@ -107,9 +140,8 @@ func ValidateDraft(d Draft) error {
 	if d.MKGLamaTahun != EvenYear(d.MKGLamaTahun) || d.MKGBaruTahun != d.MKGLamaTahun+2 {
 		return fmt.Errorf("%w: masa kerja berkala harus genap dan naik 2 tahun", ErrDraftIncomplete)
 	}
-	if d.LastSKTMT != nil && !IsPeriodicTMT(*d.LastSKTMT, d.ProposedTMT) {
-		return fmt.Errorf("%w: TMT KGB harus genap dua tahun dari TMT SK terakhir", ErrDraftIncomplete)
-	}
+	// KGB berkala dihitung dari TMT awal (CPNS/pengangkatan), bukan SK terakhir
+	// (SK terakhir bisa naik pangkat). Invarian di-cek di prepareKGBFromForm.
 	if err := requiredString("Karpeg", d.Karpeg); err != nil {
 		return err
 	}

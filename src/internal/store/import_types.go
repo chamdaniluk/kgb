@@ -9,8 +9,11 @@ type ImportedStaffUser struct {
 	UnitCode             string
 	UnitName             string
 	UnitType             string
+	UnitDistrict         string
 	NIK                  string
 	SignatureImageBase64 string
+	EmployeeNumber       string
+	JobTitle             string
 	NeedsSignerProfile   bool
 	ParentUnitCode       string
 	ParentUnitName       string

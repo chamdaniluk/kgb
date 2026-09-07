@@ -142,6 +142,7 @@ type parsedBKNUnit struct {
 	UnitCode       string
 	UnitName       string
 	UnitType       string
+	UnitDistrict   string
 	ParentUnitCode string
 	ParentUnitName string
 }
@@ -197,7 +198,7 @@ func parseBKNUnit(raw string) (parsedBKNUnit, error) {
 		return parsedBKNUnit{}, errors.New("instansi sub unit kosong")
 	}
 	if normalizeHeader(raw) == "dinas pendidikan" {
-		return parsedBKNUnit{UnitCode: "DINAS-PENDIDIKAN", UnitName: "DINAS PENDIDIKAN", UnitType: "dinas"}, nil
+		return parsedBKNUnit{UnitCode: "DINAS-PENDIDIKAN", UnitName: "DINAS PENDIDIKAN", UnitType: "dinas", UnitDistrict: "DINAS"}, nil
 	}
 	parts := strings.SplitN(canonicalInstitutionName(raw), " - ", 2)
 	school := canonicalBKNUnitName(parts[0])
@@ -227,6 +228,7 @@ func parseBKNUnit(raw string) (parsedBKNUnit, error) {
 		UnitCode:       institutionCode(school),
 		UnitName:       school,
 		UnitType:       unitType,
+		UnitDistrict:   district,
 		ParentUnitCode: institutionCode(parentName),
 		ParentUnitName: parentName,
 	}, nil
@@ -308,7 +310,7 @@ func parseImportTeachers(rows [][]string) ([]store.ImportedTeacher, error) {
 		} else {
 			mkg, source = deriveMasaKerja(asn, tmtCPNS, tmtGOL, asOf)
 		}
-		result = append(result, store.ImportedTeacher{NIP: cell(row, idxNIP), Name: cell(row, idxName), ASNType: asn, UnitCode: parsedUnit.UnitCode, UnitName: parsedUnit.UnitName, UnitType: parsedUnit.UnitType, ParentUnitCode: parsedUnit.ParentUnitCode, ParentUnitName: parsedUnit.ParentUnitName, PangkatGol: cell(row, idxGol), Pangkat: cell(row, idxPangkat), Jabatan: cell(row, idxJabatan), BirthDate: birthDate, MasaKerjaTahun: mkg, MasaKerjaSource: source, TMTKGBLast: tmtKGB})
+		result = append(result, store.ImportedTeacher{NIP: cell(row, idxNIP), Name: cell(row, idxName), ASNType: asn, UnitCode: parsedUnit.UnitCode, UnitName: parsedUnit.UnitName, UnitType: parsedUnit.UnitType, UnitDistrict: parsedUnit.UnitDistrict, ParentUnitCode: parsedUnit.ParentUnitCode, ParentUnitName: parsedUnit.ParentUnitName, PangkatGol: cell(row, idxGol), Pangkat: cell(row, idxPangkat), Jabatan: cell(row, idxJabatan), BirthDate: birthDate, MasaKerjaTahun: mkg, MasaKerjaSource: source, TMTKGBLast: tmtKGB})
 	}
 	return result, nil
 }
@@ -335,6 +337,8 @@ func parseImportStaff(rows [][]string) ([]store.ImportedStaffUser, error) {
 	idxUnitType := headerIndex(h, "Jenis Unit", "Tipe Unit")
 	idxNIK := headerIndex(h, "NIK")
 	idxSignature := headerIndex(h, "Signature Base64", "TTD Base64")
+	idxEmployeeNumber := headerIndex(h, "NIP", "NIP Petugas", "NIP Pimpinan")
+	idxJobTitle := headerIndex(h, "Jabatan", "Jabatan Petugas", "Jabatan Pimpinan")
 	for _, row := range rows[1:] {
 		if cell(row, idxUser) == "" {
 			continue
@@ -347,6 +351,7 @@ func parseImportStaff(rows [][]string) ([]store.ImportedStaffUser, error) {
 		unitName := cell(row, idxUnitName)
 		unitCode := cell(row, idxUnitCode)
 		unitType := strings.ToLower(cell(row, idxUnitType))
+		unitDistrict := ""
 		parentName, parentCode := "", ""
 		if institution != "" && normalizeHeader(institution) != "dinas pendidikan" {
 			unitName = institution
@@ -362,6 +367,10 @@ func parseImportStaff(rows [][]string) ([]store.ImportedStaffUser, error) {
 				parentName = korwilNameFromInstitution(institution)
 				parentCode = institutionCode(parentName)
 			}
+			unitDistrict = bknDistrictFromInstitution(institution)
+			if unitDistrict == "" {
+				unitDistrict = bknDistrictFromSchoolName(unitName)
+			}
 		}
 		if unitType == "" && role == store.StaffRoleVerifikatorUnit {
 			return nil, fmt.Errorf("institusi/unit wajib untuk role %q", cell(row, idxRole))
@@ -372,8 +381,9 @@ func parseImportStaff(rows [][]string) ([]store.ImportedStaffUser, error) {
 		}
 		result = append(result, store.ImportedStaffUser{
 			Username: cell(row, idxUser), Password: cell(row, idxPass), Role: role, Name: name,
-			UnitCode: unitCode, UnitName: unitName, UnitType: unitType, NIK: cell(row, idxNIK),
-			SignatureImageBase64: cell(row, idxSignature), NeedsSignerProfile: needsSigner,
+			UnitCode: unitCode, UnitName: unitName, UnitType: unitType, UnitDistrict: unitDistrict, NIK: cell(row, idxNIK),
+			SignatureImageBase64: cell(row, idxSignature), EmployeeNumber: cell(row, idxEmployeeNumber),
+			JobTitle: cell(row, idxJobTitle), NeedsSignerProfile: needsSigner,
 			ParentUnitCode: parentCode, ParentUnitName: parentName,
 		})
 	}
@@ -435,7 +445,12 @@ func (s *Server) handleImportUsers(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAdminTeachers(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	items, total, err := store.ListTeachers(r.Context(), s.Pool, r.URL.Query().Get("q"), limit, offset)
+	filter, err := unitFilterFromQuery(r)
+	if err != nil {
+		writeErr(w, 400, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	items, total, err := store.ListTeachersFiltered(r.Context(), s.Pool, r.URL.Query().Get("q"), filter, limit, offset)
 	if err != nil {
 		writeErr(w, 500, "INTERNAL", "Gagal mengambil master guru.")
 		return
@@ -468,9 +483,11 @@ func (s *Server) handleAdminUnits(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) handleAdminCreateUnit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Code string `json:"code"`
-		Name string `json:"name"`
-		Type string `json:"type"`
+		Code     string `json:"code"`
+		Name     string `json:"name"`
+		Type     string `json:"type"`
+		District string `json:"district"`
+		ParentID *int64 `json:"parent_id"`
 	}
 	if decodeJSON(r, &req) != nil || req.Code == "" || req.Name == "" {
 		writeErr(w, 400, "VALIDATION_ERROR", "Kode, nama, dan tipe unit wajib diisi.")
@@ -480,7 +497,11 @@ func (s *Server) handleAdminCreateUnit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "Tipe unit harus korwil, sd, tk, smp, skb, atau dinas.")
 		return
 	}
-	item, err := store.CreateUnit(r.Context(), s.Pool, req.Code, req.Name, req.Type)
+	if err := store.ValidateDistrict(req.District); err != nil {
+		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	item, err := store.CreateUnitFull(r.Context(), s.Pool, req.Code, req.Name, req.Type, req.District, req.ParentID)
 	if err != nil {
 		if store.IsUniqueViolation(err) {
 			writeErr(w, 409, "CONFLICT", "Kode unit sudah ada.")
@@ -492,9 +513,48 @@ func (s *Server) handleAdminCreateUnit(w http.ResponseWriter, r *http.Request) {
 	_ = store.TouchAudit(r.Context(), s.Pool, userFrom(r).ID, "buat_unit", nil, clientIP(r))
 	writeData(w, 201, item)
 }
+
+// PATCH /api/v1/admin/units/{id} — perbarui kecamatan + parent Korwil unit.
+// Dipakai melengkapi relasi verifikasi TK/SD per kecamatan. Hak: admin, admin_dinas.
+func (s *Server) handleAdminUpdateUnit(w http.ResponseWriter, r *http.Request) {
+	id, err := parsePathID(r, "id")
+	if err != nil {
+		writeErr(w, 400, "INVALID_ID", "ID unit tidak valid.")
+		return
+	}
+	var req struct {
+		District string `json:"district"`
+		ParentID *int64 `json:"parent_id"`
+	}
+	if decodeJSON(r, &req) != nil {
+		writeErr(w, 400, "VALIDATION_ERROR", "Data unit tidak valid.")
+		return
+	}
+	if err := store.ValidateDistrict(req.District); err != nil {
+		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	item, err := store.UpdateUnitScope(r.Context(), s.Pool, id, req.District, req.ParentID)
+	if err != nil {
+		writeErr(w, 500, "INTERNAL", "Gagal memperbarui unit.")
+		return
+	}
+	_ = store.TouchAudit(r.Context(), s.Pool, userFrom(r).ID, "ubah_unit", nil, clientIP(r))
+	writeData(w, 200, item)
+}
 func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	page := pageFrom(r)
-	items, total, err := store.ListUsers(r.Context(), s.Pool, r.URL.Query().Get("q"), page)
+	roles, ok := store.RoleGroupRoles(r.URL.Query().Get("role_group"))
+	if !ok {
+		writeErr(w, 400, "VALIDATION_ERROR", "Kelompok akun tidak valid (admin, guru, unit, dinas).")
+		return
+	}
+	filter, err := unitFilterFromQuery(r)
+	if err != nil {
+		writeErr(w, 400, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	items, total, err := store.ListUsersFiltered(r.Context(), s.Pool, r.URL.Query().Get("q"), roles, filter, page)
 	if err != nil {
 		writeErr(w, 500, "INTERNAL", "Gagal mengambil pengguna.")
 		return
@@ -503,13 +563,15 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username  string `json:"username"`
-		Password  string `json:"password"`
-		Role      string `json:"role"`
-		Name      string `json:"name"`
-		UnitID    *int64 `json:"unit_id"`
-		NIK       string `json:"nik"`
-		Signature string `json:"signature_image_base64"`
+		Username       string `json:"username"`
+		Password       string `json:"password"`
+		Role           string `json:"role"`
+		Name           string `json:"name"`
+		UnitID         *int64 `json:"unit_id"`
+		NIK            string `json:"nik"`
+		Signature      string `json:"signature_image_base64"`
+		EmployeeNumber string `json:"employee_number"`
+		JobTitle       string `json:"job_title"`
 	}
 	if decodeJSON(r, &req) != nil || req.Username == "" || req.Password == "" || req.Role == "" || req.Name == "" {
 		writeErr(w, 400, "VALIDATION_ERROR", "Username, password, role, dan nama wajib diisi.")
@@ -520,7 +582,7 @@ func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "INTERNAL", "Password gagal diproses.")
 		return
 	}
-	item, err := store.CreateStaffUser(r.Context(), s.Pool, req.Username, hash, req.Role, req.Name, req.UnitID, req.NIK, req.Signature)
+	item, err := store.CreateStaffUser(r.Context(), s.Pool, req.Username, hash, req.Role, req.Name, req.UnitID, req.NIK, req.Signature, req.EmployeeNumber, req.JobTitle)
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			writeErr(w, 409, "CONFLICT", "Username sudah dipakai.")
@@ -539,13 +601,15 @@ func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name      *string `json:"name"`
-		Role      *string `json:"role"`
-		UnitID    **int64 `json:"unit_id"`
-		Active    *bool   `json:"is_active"`
-		Password  *string `json:"password"`
-		NIK       *string `json:"nik"`
-		Signature *string `json:"signature_image_base64"`
+		Name           *string `json:"name"`
+		Role           *string `json:"role"`
+		UnitID         **int64 `json:"unit_id"`
+		Active         *bool   `json:"is_active"`
+		Password       *string `json:"password"`
+		NIK            *string `json:"nik"`
+		Signature      *string `json:"signature_image_base64"`
+		EmployeeNumber *string `json:"employee_number"`
+		JobTitle       *string `json:"job_title"`
 	}
 	if decodeJSON(r, &req) != nil {
 		writeErr(w, 400, "VALIDATION_ERROR", "Data pengguna tidak valid.")
@@ -560,7 +624,7 @@ func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		hash = &h
 	}
-	item, err := store.UpdateStaffUser(r.Context(), s.Pool, id, req.Name, req.Role, req.UnitID, req.Active, hash, req.NIK, req.Signature)
+	item, err := store.UpdateStaffUser(r.Context(), s.Pool, id, req.Name, req.Role, req.UnitID, req.Active, hash, req.NIK, req.Signature, req.EmployeeNumber, req.JobTitle)
 	if err != nil {
 		if mapStoreError(w, err) {
 			return
@@ -652,10 +716,96 @@ func (s *Server) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 		sid = &v
 	}
 	page := pageFrom(r)
-	items, total, err := store.ListAuditLogs(r.Context(), s.Pool, sid, r.URL.Query().Get("action"), page)
+	auditFilter, err := auditFilterFromQuery(r)
+	if err != nil {
+		writeErr(w, 400, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	items, total, err := store.ListAuditLogsFiltered(r.Context(), s.Pool, sid, r.URL.Query().Get("action"), auditFilter, page)
 	if err != nil {
 		writeErr(w, 500, "INTERNAL", "Gagal mengambil audit.")
 		return
 	}
 	writeDataMeta(w, 200, items, map[string]any{"limit": page.Limit, "offset": page.Offset, "total": total})
+}
+
+// unitFilterFromQuery membaca filter wilayah bersama (unit_id, unit_type,
+// kecamatan) dari query string; kecamatan dinormalisasi ke huruf besar.
+func unitFilterFromQuery(r *http.Request) (store.UnitFilter, error) {
+	q := r.URL.Query()
+	var f store.UnitFilter
+	if raw := q.Get("unit_id"); raw != "" {
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || v <= 0 {
+			return f, errInvalidUnitFilter("ID unit tidak valid.")
+		}
+		f.UnitID = v
+	}
+	if t := q.Get("unit_type"); t != "" {
+		switch t {
+		case "sd", "smp", "skb", "tk", "korwil", "dinas":
+			f.UnitType = t
+		default:
+			return f, errInvalidUnitFilter("Tipe unit tidak valid (sd, smp, skb, tk, korwil, dinas).")
+		}
+	}
+	f.Kecamatan = q.Get("kecamatan")
+	return f, nil
+}
+
+// auditFilterFromQuery membaca filter pelaksana + rentang tanggal log.
+func auditFilterFromQuery(r *http.Request) (store.AuditFilter, error) {
+	q := r.URL.Query()
+	f := store.AuditFilter{Actor: q.Get("actor"), From: q.Get("from"), To: q.Get("to")}
+	for _, d := range []string{f.From, f.To} {
+		if d == "" {
+			continue
+		}
+		if _, err := time.Parse("2006-01-02", d); err != nil {
+			return f, errInvalidUnitFilter("Format tanggal tidak valid (gunakan YYYY-MM-DD).")
+		}
+	}
+	return f, nil
+}
+
+type unitFilterError struct{ msg string }
+
+func (e unitFilterError) Error() string { return e.msg }
+
+func errInvalidUnitFilter(msg string) error { return unitFilterError{msg} }
+
+// GET /api/v1/admin/filter-options — opsi dropdown filter dasbor admin:
+// daftar unit, kecamatan, dan tipe unit. Hak: admin, admin_dinas. Tanpa audit.
+func (s *Server) handleAdminFilterOptions(w http.ResponseWriter, r *http.Request) {
+	units, err := store.ListUnits(r.Context(), s.Pool)
+	if err != nil {
+		writeErr(w, 500, "INTERNAL", "Gagal mengambil opsi filter.")
+		return
+	}
+	opts := make([]map[string]any, 0, len(units))
+	for _, u := range units {
+		opts = append(opts, map[string]any{"id": u.ID, "name": u.Name, "type": u.Type, "district": u.District, "parent_id": u.ParentID, "parent_name": u.ParentName})
+	}
+	writeData(w, 200, map[string]any{
+		"units":      opts,
+		"kecamatan":  store.KecamatanOptions(),
+		"unit_types": []string{"sd", "smp", "skb", "tk", "korwil", "dinas"},
+		"role_groups": []map[string]any{
+			{"value": "admin", "label": "Admin"},
+			{"value": "guru", "label": "Guru"},
+			{"value": "unit", "label": "Unit"},
+			{"value": "dinas", "label": "Dinas"},
+		},
+	})
+}
+
+// GET /api/v1/admin/audit-logs/actions — daftar aksi log untuk dropdown.
+// Hak: admin, admin_dinas. Tanpa audit.
+func (s *Server) handleAdminAuditActions(w http.ResponseWriter, r *http.Request) {
+	actions, err := store.ListAuditActions(r.Context(), s.Pool)
+	if err != nil {
+		writeErr(w, 500, "INTERNAL", "Gagal mengambil daftar aksi.")
+		return
+	}
+	writeData(w, 200, actions)
 }

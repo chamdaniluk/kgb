@@ -121,20 +121,67 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	if err != nil {
 		return preparedKGB{}, err
 	}
-	// Golongan editable langsung; PPPK dikunci IX. Pangkat diturunkan dari golongan.
-	formGol := strings.TrimSpace(r.FormValue("pangkat_gol"))
-	if t.ASNType == "pppk" {
-		t.PangkatGol = "IX"
-	} else if formGol != "" {
-		if !validPNSGolongan(formGol) {
-			return preparedKGB{}, errors.New("pangkat/golongan tidak valid")
-		}
-		t.PangkatGol = formGol
-		draft.Pangkat = pangkatForGolongan(formGol)
+	// KP terakhir (opsional): golongan dikunci dari SIPPASN, masa kerja
+	// mengikuti SK yang diterbitkan. Bila KP lebih baru dari KGB terakhir,
+	// gaji KGB mengacu golongan KP; jangka waktu tetap 2 tahun dari KGB.
+	kp, err := parseKPLast(r)
+	if err != nil {
+		return preparedKGB{}, err
 	}
-	// Jabatan wajib dari daftar jenjang fungsional guru.
-	if j := strings.TrimSpace(draft.Jabatan); j != "" && !validJabatanGuru(j) {
-		return preparedKGB{}, errors.New("jabatan harus dipilih dari daftar jenjang fungsional guru")
+	if kp.HasData() {
+		if t.ASNType == "pns" && kp.Golongan != t.PangkatGol {
+			return preparedKGB{}, errors.New("golongan KP mengikuti SIPPASN dan tidak dapat diubah")
+		}
+		if t.ASNType == "pppk" && !store.ValidPPPKGolongan(kp.Golongan) {
+			return preparedKGB{}, errors.New("golongan KP PPPK harus I sampai XVII")
+		}
+	}
+	draft.LastKPGolongan = kp.Golongan
+	draft.LastKPTMT = kp.TMT
+	draft.LastKPMasaTahun = kp.MasaTahun
+	draft.LastKPMasaBulan = kp.MasaBulan
+	draft.LastKPNomor = kp.Nomor
+	draft.LastKPTanggal = kp.Tanggal
+	draft.LastKPPejabat = kp.Pejabat
+	// KGB terakhir: golongan ruang saat KGB terakhir dapat diubah (bisa
+	// berbeda dari KP bila ada perubahan di tengah masa KGB); masa kerja
+	// mengikuti SK yang diterbitkan.
+	kgb, err := parseKGBLast(r, t)
+	if err != nil {
+		return preparedKGB{}, err
+	}
+	if t.ASNType == "pns" && !validPNSGolongan(kgb.Golongan) {
+		return preparedKGB{}, errors.New("golongan KGB tidak valid")
+	}
+	if t.ASNType == "pppk" {
+		if !store.ValidPPPKGolongan(kgb.Golongan) {
+			return preparedKGB{}, errors.New("golongan KGB PPPK harus I sampai XVII sesuai SK")
+		}
+		t.PangkatGol = kgb.Golongan
+	}
+	draft.LastSKTMT = kgb.TMT
+	draft.LastSKMasaTahun = kgb.MasaTahun
+	draft.LastSKMasaBulan = kgb.MasaBulan
+	draft.LastSKNomor = kgb.Nomor
+	draft.LastSKTanggal = kgb.Tanggal
+	draft.LastSKPejabat = kgb.Pejabat
+	// Naskah SK mengikuti KP terakhir: pangkat/golongan + jabatan dari KP
+	// bila ada, selain itu dari KGB. Tidak ada input ganda.
+	if kp.HasData() {
+		if t.ASNType == "pns" {
+			draft.Pangkat = pangkatForGolongan(kp.Golongan)
+		}
+		t.PangkatGol = kp.Golongan
+	} else {
+		if t.ASNType == "pns" {
+			draft.Pangkat = pangkatForGolongan(kgb.Golongan)
+		}
+		t.PangkatGol = kgb.Golongan
+	}
+	// Jabatan wajib sesuai kategori: guru dari jenjang fungsional guru,
+	// non-guru dari daftar jabatan Disdik yang teramati di SIPPASN.
+	if j := strings.TrimSpace(draft.Jabatan); j != "" && !validJabatanUntuk(j, t.Kategori) {
+		return preparedKGB{}, errors.New("jabatan tidak sesuai kategori pegawai")
 	}
 	unitRaw := strings.TrimSpace(r.FormValue("unit_id"))
 	if unitRaw != "" {
@@ -178,20 +225,34 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	if tmtAwal.After(tmt) {
 		return preparedKGB{}, errors.New("TMT awal tidak boleh setelah TMT KGB berlaku")
 	}
-	// Masa kerja golongan dihitung dari TMT awal → TMT berlaku; baru = masa ke TMT berlaku.
-	masaBaru := letterdata.MasaKerjaFromTMT(*tmtAwal, tmt)
+	// Masa kerja KGB baru: MKG KGB sebelumnya + 2 bila tersimpan dari SK
+	// (mencakup peninjauan masa kerja yang sudah tercatat di SK sebelumnya);
+	// selain itu dihitung dari TMT awal → TMT berlaku.
+	mkgSK := draft.LastSKMasaTahun
+	if mkgSK == nil {
+		mkgSK = t.LastSKMasaKerjaTahun
+	}
+	masaBaru := letterdata.MasaKerjaKGB(mkgSK, *tmtAwal, tmt)
 	masaLama := masaBaru - 2
 	if masaLama < 0 {
 		masaLama = 0
 	}
-	lama, baru, zero := masaLama, masaBaru, 0
+	lama, baru := masaLama, masaBaru
+	bulanSK := 0
+	if draft.LastSKMasaBulan != nil {
+		bulanSK = *draft.LastSKMasaBulan
+	} else if t.LastSKMasaKerjaBulan != nil {
+		bulanSK = *t.LastSKMasaKerjaBulan
+	}
 	draft.MKGLamaTahun = &lama
-	draft.MKGLamaBulan = &zero
+	draft.MKGLamaBulan = &bulanSK
 	draft.MKGBaruTahun = &baru
-	draft.MKGBaruBulan = &zero
-	gol := t.PangkatGol
-	if t.ASNType == "pppk" {
-		gol = "IX"
+	draft.MKGBaruBulan = &bulanSK
+	// Golongan efektif: KP bila lebih baru dari KGB terakhir (jangka waktu
+	// KGB tetap 2 tahun dari KGB terakhir), selain itu golongan KGB/guru.
+	gol := store.EffectiveGolongan(kp, draft.LastSKTMT, t.PangkatGol)
+	if t.ASNType == "pns" {
+		draft.Pangkat = pangkatForGolongan(gol)
 	}
 	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, masaLama)
 	if err != nil {
@@ -218,6 +279,81 @@ func firstNonEmptyForm(r *http.Request, names ...string) string {
 		}
 	}
 	return ""
+}
+
+// parseKPLast membaca seksi KP Terakhir. Seluruh kolom wajib diisi:
+// golongan, TMT, masa kerja (tahun+bulan), nomor, tanggal, dan pejabat SK KP.
+func parseKPLast(r *http.Request) (store.KPLast, error) {
+	var kp store.KPLast
+	kp.Golongan = strings.TrimSpace(r.FormValue("last_kp_golongan"))
+	kp.Nomor = strings.TrimSpace(r.FormValue("last_kp_nomor"))
+	kp.Pejabat = strings.TrimSpace(r.FormValue("last_kp_pejabat"))
+	tmt, err := parseOptionalFormDate(r.FormValue("last_kp_tmt"))
+	if err != nil {
+		return kp, errors.New("TMT KP terakhir tidak valid")
+	}
+	kp.TMT = tmt
+	tanggal, err := parseOptionalFormDate(r.FormValue("last_kp_tanggal"))
+	if err != nil {
+		return kp, errors.New("tanggal SK KP tidak valid")
+	}
+	kp.Tanggal = tanggal
+	masaTahun, err := parseOptionalFormInt(r.FormValue("last_kp_masa_tahun"))
+	if err != nil {
+		return kp, errors.New("masa kerja KP tidak valid")
+	}
+	kp.MasaTahun = masaTahun
+	masaBulan, err := parseOptionalFormInt(r.FormValue("last_kp_masa_bulan"))
+	if err != nil {
+		return kp, errors.New("bulan masa kerja KP tidak valid")
+	}
+	kp.MasaBulan = masaBulan
+	if kp.Golongan == "" || kp.TMT == nil || kp.MasaTahun == nil || kp.MasaBulan == nil || kp.Nomor == "" || kp.Tanggal == nil || kp.Pejabat == "" {
+		return kp, errors.New("seluruh kolom KP Terakhir wajib diisi")
+	}
+	return kp, nil
+}
+
+// parseKGBLast membaca seksi KGB Terakhir: golongan ruang saat KGB terakhir
+// dapat diubah (bisa berbeda dari KP), masa kerja mengikuti SK yang diterbitkan.
+func parseKGBLast(r *http.Request, t store.Teacher) (store.KGBLast, error) {
+	var kgb store.KGBLast
+	kgb.Golongan = strings.TrimSpace(r.FormValue("last_kgb_golongan"))
+	kgb.Nomor = strings.TrimSpace(r.FormValue("last_sk_nomor"))
+	kgb.Pejabat = strings.TrimSpace(r.FormValue("last_sk_pejabat"))
+	tmt, err := parseOptionalFormDate(r.FormValue("last_sk_tmt"))
+	if err != nil {
+		return kgb, errors.New("TMT KGB terakhir tidak valid")
+	}
+	kgb.TMT = tmt
+	if kgb.TMT == nil {
+		kgb.TMT = t.LastSKTMTBerlaku
+	}
+	if kgb.TMT == nil {
+		kgb.TMT = t.TMTKGBLast
+	}
+	tanggal, err := parseOptionalFormDate(r.FormValue("last_sk_tanggal"))
+	if err != nil {
+		return kgb, errors.New("tanggal SK KGB tidak valid")
+	}
+	kgb.Tanggal = tanggal
+	masaTahun, err := parseOptionalFormInt(r.FormValue("last_kgb_masa_tahun"))
+	if err != nil {
+		return kgb, errors.New("masa kerja KGB tidak valid")
+	}
+	kgb.MasaTahun = masaTahun
+	masaBulan, err := parseOptionalFormInt(r.FormValue("last_kgb_masa_bulan"))
+	if err != nil {
+		return kgb, errors.New("bulan masa kerja KGB tidak valid")
+	}
+	kgb.MasaBulan = masaBulan
+	if kgb.Golongan == "" {
+		kgb.Golongan = t.PangkatGol
+	}
+	if kgb.Golongan == "" || kgb.TMT == nil {
+		return kgb, errors.New("golongan dan TMT KGB terakhir wajib diisi")
+	}
+	return kgb, nil
 }
 
 func parseOptionalFormInt(raw string) (*int, error) {
@@ -288,36 +424,6 @@ func letterDraftFromForm(r *http.Request, teacher store.Teacher, masaKerja int) 
 	if birthDate == nil {
 		birthDate = teacher.BirthDate
 	}
-	lastSKTanggal, err := parseOptionalFormDate(r.FormValue("last_sk_tanggal"))
-	if err != nil {
-		return store.LetterDraft{}, errors.New("tanggal SK terakhir tidak valid")
-	}
-	if lastSKTanggal == nil {
-		lastSKTanggal = teacher.LastSKTanggal
-	}
-	lastSKTMT, err := parseOptionalFormDate(r.FormValue("last_sk_tmt"))
-	if err != nil {
-		return store.LetterDraft{}, errors.New("TMT SK terakhir tidak valid")
-	}
-	if lastSKTMT == nil {
-		lastSKTMT = teacher.LastSKTMTBerlaku
-	}
-	mkgLamaTahun, err := parseOptionalFormInt(r.FormValue("mkg_lama_tahun"))
-	if err != nil {
-		return store.LetterDraft{}, errors.New("masa kerja lama tidak valid")
-	}
-	mkgLamaBulan, err := parseOptionalFormInt(r.FormValue("mkg_lama_bulan"))
-	if err != nil {
-		return store.LetterDraft{}, errors.New("bulan masa kerja lama tidak valid")
-	}
-	mkgBaruTahun, err := parseOptionalFormInt(r.FormValue("mkg_baru_tahun"))
-	if err != nil {
-		return store.LetterDraft{}, errors.New("masa kerja baru tidak valid")
-	}
-	mkgBaruBulan, err := parseOptionalFormInt(r.FormValue("mkg_baru_bulan"))
-	if err != nil {
-		return store.LetterDraft{}, errors.New("bulan masa kerja baru tidak valid")
-	}
 	perpanjangan, _, err := parseOptionalDashDate(r.FormValue("perpanjangan_perjanjian_kerja"))
 	if err != nil {
 		return store.LetterDraft{}, err
@@ -329,20 +435,15 @@ func letterDraftFromForm(r *http.Request, teacher store.Teacher, masaKerja int) 
 		}
 		return fallback
 	}
+	// Naskah SK mengikuti KP terakhir (pangkat/golongan + jabatan diisi dari
+	// seksi KP/KGB di prepareKGBFromForm, bukan dari input ganda di sini).
+	// Blok bawah form (SK terakhir + MKG) dihapus: sudah tercakup seksi atas.
 	return store.LetterDraft{
 		BirthPlace:     orDefault(r.FormValue("birth_place"), teacher.BirthPlace),
 		BirthDate:      birthDate,
 		Karpeg:         orDefault(r.FormValue("karpeg"), teacher.Karpeg),
 		Pangkat:        orDefault(r.FormValue("pangkat"), teacher.Pangkat),
 		Jabatan:        orDefault(r.FormValue("jabatan"), teacher.Jabatan),
-		LastSKPejabat:  orDefault(r.FormValue("last_sk_pejabat"), teacher.LastSKPejabat),
-		LastSKTanggal:  lastSKTanggal,
-		LastSKNomor:    orDefault(r.FormValue("last_sk_nomor"), teacher.LastSKNomor),
-		LastSKTMT:      lastSKTMT,
-		MKGLamaTahun:   mkgLamaTahun,
-		MKGLamaBulan:   mkgLamaBulan,
-		MKGBaruTahun:   mkgBaruTahun,
-		MKGBaruBulan:   mkgBaruBulan,
 		MasaPerjanjian: strings.TrimSpace(r.FormValue("masa_perjanjian_kerja")),
 		Perpanjangan:   perpanjangan,
 	}, nil
@@ -361,6 +462,15 @@ func validateDraftFor(teacher store.Teacher, draft store.LetterDraft, proposedTM
 		LastSKNomor:    draft.LastSKNomor,
 		LastSKTanggal:  draft.LastSKTanggal,
 		LastSKTMT:      draft.LastSKTMT,
+		LastSKMasaTahun: draft.LastSKMasaTahun,
+		LastSKMasaBulan: draft.LastSKMasaBulan,
+		LastKPGolongan: draft.LastKPGolongan,
+		LastKPTMT:      draft.LastKPTMT,
+		LastKPMasaTahun: draft.LastKPMasaTahun,
+		LastKPMasaBulan: draft.LastKPMasaBulan,
+		LastKPNomor:    draft.LastKPNomor,
+		LastKPTanggal:  draft.LastKPTanggal,
+		LastKPPejabat:  draft.LastKPPejabat,
 		MKGLamaTahun:   derefIntPtr(draft.MKGLamaTahun),
 		MKGLamaBulan:   derefIntPtr(draft.MKGLamaBulan),
 		MKGBaruTahun:   derefIntPtr(draft.MKGBaruTahun),
@@ -450,12 +560,57 @@ func (s *Server) handleSalaryPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	gol := strings.TrimSpace(q.Get("golongan"))
 	if t.ASNType == "pppk" {
-		gol = "IX"
+		if gol == "" {
+			gol = t.PangkatGol
+		}
+		if !store.ValidPPPKGolongan(gol) {
+			writeErr(w, http.StatusUnprocessableEntity, "INVALID_GOLONGAN", "Golongan PPPK harus I sampai XVII.")
+			return
+		}
 	} else if gol == "" || !validPNSGolongan(gol) {
 		writeErr(w, http.StatusUnprocessableEntity, "INVALID_GOLONGAN", "Golongan tidak valid.")
 		return
 	}
-	masaBaru := letterdata.MasaKerjaFromTMT(*tmtAwal, tmtBerlaku)
+	// KP terakhir (opsional): bila lebih baru dari KGB terakhir, gaji
+	// mengacu golongan KP; jangka waktu tetap 2 tahun dari KGB terakhir.
+	kpGol := strings.TrimSpace(q.Get("last_kp_golongan"))
+	kpTMT, err := parseOptionalFormDate(q.Get("last_kp_tmt"))
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "INVALID_KP", "TMT KP terakhir tidak valid.")
+		return
+	}
+	var kgbTMT *time.Time
+	if v, errP := parseOptionalFormDate(q.Get("last_sk_tmt")); errP == nil && v != nil {
+		kgbTMT = v
+	}
+	if kpGol != "" || kpTMT != nil {
+		if kpGol == "" || kpTMT == nil {
+			writeErr(w, http.StatusUnprocessableEntity, "INVALID_KP", "Golongan dan TMT KP wajib diisi bila ada KP terbaru.")
+			return
+		}
+		if t.ASNType == "pppk" && !store.ValidPPPKGolongan(kpGol) {
+			writeErr(w, http.StatusUnprocessableEntity, "INVALID_KP", "Golongan KP PPPK harus I sampai XVII.")
+			return
+		}
+		if t.ASNType == "pns" && !validPNSGolongan(kpGol) {
+			writeErr(w, http.StatusUnprocessableEntity, "INVALID_KP", "Golongan KP tidak valid.")
+			return
+		}
+		gol = store.EffectiveGolongan(store.KPLast{Golongan: kpGol, TMT: kpTMT}, kgbTMT, gol)
+	}
+	// Aturan sama dengan submit: MKG KGB sebelumnya + 2 bila ada
+	// (peninjauan masa kerja yang tercatat di SK), fallback hitung TMT.
+	// Parameter opsional last_kgb_masa_tahun dari seksi KGB form.
+	var mkgSK *int
+	if raw := strings.TrimSpace(q.Get("last_kgb_masa_tahun")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+			mkgSK = &n
+		}
+	}
+	if mkgSK == nil {
+		mkgSK = t.LastSKMasaKerjaTahun
+	}
+	masaBaru := letterdata.MasaKerjaKGB(mkgSK, *tmtAwal, tmtBerlaku)
 	masaLama := masaBaru - 2
 	if masaLama < 0 {
 		masaLama = 0
@@ -472,6 +627,7 @@ func (s *Server) handleSalaryPreview(w http.ResponseWriter, r *http.Request) {
 		"mkg_baru_tahun":   masaBaru,
 		"tmt_berlaku":      tmtBerlaku.Format("2006-01-02"),
 		"pangkat":          pangkatForGolongan(gol),
+		"golongan_efektif": gol,
 	})
 }
 
@@ -771,10 +927,48 @@ func (s *Server) handleUnitReject(w http.ResponseWriter, r *http.Request) {
 	s.handleTransition(w, r, "verifikator_unit", "menunggu_unit", "dikembalikan_unit", "tolak_unit", true)
 }
 func (s *Server) handleDinasApprove(w http.ResponseWriter, r *http.Request) {
-	s.handleTransition(w, r, "verifikator_dinas", "menunggu_dinas", "menunggu_tte", "setuju_dinas", false)
+	s.handleDinasDecision(w, r, "menunggu_tte", "setuju_dinas", false)
 }
 func (s *Server) handleDinasReject(w http.ResponseWriter, r *http.Request) {
-	s.handleTransition(w, r, "verifikator_dinas", "menunggu_dinas", "dikembalikan_dinas", "tolak_dinas", true)
+	s.handleDinasDecision(w, r, "dikembalikan_dinas", "tolak_dinas", true)
+}
+
+// handleDinasDecision membatasi peran admin_dinas hanya untuk usulan pegawai
+// Dinas (unit_type dinas). Usulan jenjang TK/SD/SMP/SKB hanya bisa diproses
+// verifikator_dinas; admin_dinas tetap bisa melihatnya (read-only).
+func (s *Server) handleDinasDecision(w http.ResponseWriter, r *http.Request, next, action string, noteRequired bool) {
+	sub, ok := s.reviewDetail(w, r, "verifikator_dinas")
+	if !ok {
+		return
+	}
+	me := userFrom(r)
+	if me.Role == "admin_dinas" && sub.UnitType != "dinas" {
+		writeErr(w, http.StatusForbidden, "FORBIDDEN", "Usulan jenjang "+sub.UnitType+" hanya dapat diproses verifikator Dinas. Akun Admin Dinas hanya memproses usulan pegawai Dinas.")
+		return
+	}
+	var req struct {
+		Note string `json:"note"`
+	}
+	if r.Body != nil {
+		if err := decodeJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+			writeErr(w, http.StatusBadRequest, "INVALID_JSON", "Payload keputusan tidak valid.")
+			return
+		}
+	}
+	req.Note = strings.TrimSpace(req.Note)
+	if noteRequired && req.Note == "" {
+		writeErr(w, http.StatusBadRequest, "NOTE_REQUIRED", "Catatan penolakan wajib diisi.")
+		return
+	}
+	updated, err := store.Transition(r.Context(), s.Pool, sub.ID, me.ID, "menunggu_dinas", next, action, req.Note, clientIP(r))
+	if err != nil {
+		if mapStoreError(w, err) {
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "TRANSITION_FAILED", "Perubahan status gagal.")
+		return
+	}
+	writeData(w, http.StatusOK, updated)
 }
 
 func (s *Server) handleTransition(w http.ResponseWriter, r *http.Request, role, expected, next, action string, noteRequired bool) {

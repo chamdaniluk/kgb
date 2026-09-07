@@ -28,20 +28,29 @@ SELECT s.id, s.teacher_id, s.status, s.proposed_tmt,
        COALESCE(s.snapshot_pangkat, COALESCE(t.pangkat, '')), COALESCE(s.snapshot_jabatan, COALESCE(t.jabatan, '')),
        COALESCE(s.snapshot_masa_kerja_tahun, t.masa_kerja_tahun), COALESCE(s.snapshot_unit_id, t.unit_id),
        COALESCE(s.snapshot_unit_name, un.name),
+       COALESCE(vu.type, un.type, ''), COALESCE(vu.district, un.district, ''),
+       COALESCE(korwil.name, ''),
        COALESCE(s.snapshot_birth_place, COALESCE(t.birth_place,'')), s.snapshot_birth_date, COALESCE(s.snapshot_karpeg, COALESCE(t.karpeg,'')),
        COALESCE(s.snapshot_last_sk_pejabat, COALESCE(t.last_sk_pejabat,'')), s.snapshot_last_sk_tanggal, COALESCE(s.snapshot_last_sk_nomor, COALESCE(t.last_sk_nomor,'')),
        s.snapshot_last_sk_tmt_berlaku, s.snapshot_last_sk_masa_kerja_tahun, s.snapshot_last_sk_masa_kerja_bulan,
        COALESCE(s.draft_birth_place, ''), s.draft_birth_date, COALESCE(s.draft_karpeg, ''),
        COALESCE(s.draft_pangkat, ''), COALESCE(s.draft_jabatan, ''),
        COALESCE(s.draft_last_sk_pejabat, ''), s.draft_last_sk_tanggal, COALESCE(s.draft_last_sk_nomor, ''),
-       s.draft_last_sk_tmt, s.draft_mkg_lama_tahun, s.draft_mkg_lama_bulan,
+       s.draft_last_sk_tmt, s.draft_last_sk_masa_tahun, s.draft_last_sk_masa_bulan,
+       COALESCE(s.draft_last_kp_golongan, ''), s.draft_last_kp_tmt, COALESCE(s.draft_last_kp_nomor, ''),
+       s.draft_last_kp_tanggal, COALESCE(s.draft_last_kp_pejabat, ''),
+       s.draft_last_kp_masa_tahun, s.draft_last_kp_masa_bulan,
+       s.draft_mkg_lama_tahun, s.draft_mkg_lama_bulan,
        s.draft_mkg_baru_tahun, s.draft_mkg_baru_bulan,
        COALESCE(s.draft_masa_perjanjian, ''), s.draft_perpanjangan_kontrak,
+       s.tmt_awal,
        l.id, l.number, l.issued_at, l.tte_receipt_id
 FROM submissions s
 JOIN teachers t ON t.id = s.teacher_id
 JOIN units un ON un.id = t.unit_id
 LEFT JOIN units pu ON pu.id = s.proposed_unit_id
+LEFT JOIN units vu ON vu.id = COALESCE(s.proposed_unit_id, s.snapshot_unit_id, t.unit_id)
+LEFT JOIN units korwil ON korwil.id = vu.parent_id AND korwil.type = 'korwil'
 LEFT JOIN letters l ON l.submission_id = s.id`
 
 func scanSubmission(row pgx.Row) (Submission, error) {
@@ -58,11 +67,15 @@ func scanSubmission(row pgx.Row) (Submission, error) {
 		&s.CurrentSalary, &s.NextSalary, &s.FileName, &s.FilePath, &s.FileSize,
 		&s.RejectionNote, &s.SubmittedAt, &s.CreatedAt, &s.UpdatedAt,
 		&s.TeacherName, &s.NIP, &s.ASNType, &s.PangkatGol, &s.Pangkat, &s.Jabatan, &s.MasaKerjaTahun,
-		&s.UnitID, &s.UnitName, &s.SnapshotBirthPlace, &s.SnapshotBirthDate, &s.SnapshotKarpeg, &s.SnapshotLastSKPejabat, &s.SnapshotLastSKTanggal, &s.SnapshotLastSKNomor, &s.SnapshotLastSKTMTBerlaku, &s.SnapshotLastSKMasaTahun, &s.SnapshotLastSKMasaBulan,
+		&s.UnitID, &s.UnitName, &s.UnitType, &s.UnitDistrict, &s.UnitKorwilName, &s.SnapshotBirthPlace, &s.SnapshotBirthDate, &s.SnapshotKarpeg, &s.SnapshotLastSKPejabat, &s.SnapshotLastSKTanggal, &s.SnapshotLastSKNomor, &s.SnapshotLastSKTMTBerlaku, &s.SnapshotLastSKMasaTahun, &s.SnapshotLastSKMasaBulan,
 		&s.DraftBirthPlace, &s.DraftBirthDate, &s.DraftKarpeg, &s.DraftPangkat, &s.DraftJabatan,
 		&s.DraftLastSKPejabat, &s.DraftLastSKTanggal, &s.DraftLastSKNomor, &s.DraftLastSKTMT,
+		&s.DraftLastSKMasaTahun, &s.DraftLastSKMasaBulan,
+		&s.DraftLastKPGolongan, &s.DraftLastKPTMT, &s.DraftLastKPNomor, &s.DraftLastKPTanggal, &s.DraftLastKPPejabat,
+		&s.DraftLastKPMasaTahun, &s.DraftLastKPMasaBulan,
 		&s.DraftMKGLamaTahun, &s.DraftMKGLamaBulan, &s.DraftMKGBaruTahun, &s.DraftMKGBaruBulan,
 		&s.DraftMasaPerjanjian, &s.DraftPerpanjangan,
+		&s.TMTAwal,
 		&letterID, &number, &issuedAt, &receipt,
 	)
 	if err != nil {
@@ -115,7 +128,10 @@ func ListSubmissionsForTeacher(ctx context.Context, pool *pgxpool.Pool, teacherI
 	return result, rows.Err()
 }
 
-// ListQueue mengambil antrean status tertentu. Unit hanya boleh melihat unitnya.
+// ListQueue mengambil antrean status tertentu dengan cakupan jenjang:
+// akun Korwil melihat TK/SD sekecamatan (relasi parent atau kecamatan sama),
+// akun SMP/SKB melihat unitnya sendiri. Unit Dinas tidak punya antrean unit
+// karena usulannya langsung berstatus menunggu_dinas saat dibuat.
 // Mengembalikan potongan halaman beserta total baris (untuk pagination).
 func ListQueue(ctx context.Context, pool *pgxpool.Pool, role string, unitID *int64, status string, page Page) ([]Submission, int64, error) {
 	where := ` WHERE s.status = $1`
@@ -125,7 +141,20 @@ func ListQueue(ctx context.Context, pool *pgxpool.Pool, role string, unitID *int
 		if unitID == nil {
 			return nil, 0, ErrForbidden
 		}
-		where += ` AND (` + verificationUnit + ` = $2 OR EXISTS (SELECT 1 FROM units scope JOIN units child ON child.parent_id=scope.id WHERE scope.id=$2 AND scope.type='korwil' AND child.id=` + verificationUnit + ` AND child.type IN ('sd','tk')))`
+		where += ` AND EXISTS (
+			SELECT 1 FROM units actor
+			LEFT JOIN units cand ON cand.id = ` + verificationUnit + `
+			LEFT JOIN units candpar ON candpar.id = cand.parent_id
+			WHERE actor.id = $2 AND (
+				-- SMP/SKB: unitnya sendiri
+				(actor.type IN ('smp','skb') AND cand.id = actor.id)
+				-- Korwil: TK/SD sekecamatan via parent atau kolom kecamatan
+				OR (actor.type = 'korwil' AND cand.type IN ('sd','tk') AND (
+					cand.parent_id = actor.id
+					OR (candpar.type = 'korwil' AND candpar.district IS NOT NULL AND candpar.district = actor.district)
+					OR (cand.district IS NOT NULL AND cand.district = actor.district)
+				))
+			))`
 		args = append(args, *unitID)
 	}
 	var total int64
@@ -153,12 +182,22 @@ func ListQueue(ctx context.Context, pool *pgxpool.Pool, role string, unitID *int
 }
 
 // CreateSubmission menyimpan pengajuan dan audit submit dalam satu transaksi.
-func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorID int64, proposedTMT time.Time, proposedMasaKerja *int, proposedTMTKGBLast *time.Time, change TeacherChange, draft LetterDraft, currentSalary, nextSalary, fileName, filePath string, fileSize int64, ip string) (Submission, error) {
+// Status awal mengikuti jenjang unit guru: unit Dinas langsung menunggu_dinas
+// (tanpa antrean unit), jenjang lain menunggu_unit untuk verifikasi Korwil/SMP.
+func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorID int64, proposedTMT time.Time, proposedMasaKerja *int, proposedTMTKGBLast, tmtAwal *time.Time, change TeacherChange, draft LetterDraft, currentSalary, nextSalary, fileName, filePath string, fileSize int64, ip string) (Submission, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return Submission{}, err
 	}
 	defer tx.Rollback(ctx)
+	initialStatus := "menunggu_unit"
+	var teacherUnitType string
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(u.type,'') FROM teachers t JOIN units u ON u.id=t.unit_id WHERE t.id=$1`, teacherID).Scan(&teacherUnitType); err != nil {
+		return Submission{}, fmt.Errorf("cek unit guru: %w", err)
+	}
+	if teacherUnitType == "dinas" {
+		initialStatus = "menunggu_dinas"
+	}
 	var id int64
 	err = tx.QueryRow(ctx, `
 		INSERT INTO submissions (teacher_id, status, proposed_tmt, proposed_masa_kerja_tahun, proposed_tmt_kgb_last,
@@ -166,16 +205,22 @@ func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorI
 			current_salary, next_salary, file_name, file_path, file_size, submitted_at,
 			draft_birth_place, draft_birth_date, draft_karpeg, draft_pangkat, draft_jabatan,
 			draft_last_sk_pejabat, draft_last_sk_tanggal, draft_last_sk_nomor, draft_last_sk_tmt,
+			draft_last_sk_masa_tahun, draft_last_sk_masa_bulan,
+			draft_last_kp_golongan, draft_last_kp_tmt, draft_last_kp_nomor, draft_last_kp_tanggal, draft_last_kp_pejabat,
+			draft_last_kp_masa_tahun, draft_last_kp_masa_bulan,
 			draft_mkg_lama_tahun, draft_mkg_lama_bulan, draft_mkg_baru_tahun, draft_mkg_baru_bulan,
-			draft_masa_perjanjian, draft_perpanjangan_kontrak)
-		VALUES ($1, 'menunggu_unit', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(),
-			$16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30) RETURNING id`,
-		teacherID, proposedTMT, proposedMasaKerja, proposedTMTKGBLast, change.PangkatGol, change.Pangkat, change.Jabatan,
+			draft_masa_perjanjian, draft_perpanjangan_kontrak, tmt_awal)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(),
+			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41) RETURNING id`,
+		teacherID, initialStatus, proposedTMT, proposedMasaKerja, proposedTMTKGBLast, change.PangkatGol, change.Pangkat, change.Jabatan,
 		change.UnitID, change.EffectiveDate, nullIfEmpty(change.Note), currentSalary, nextSalary, fileName, filePath, fileSize,
 		nullIfEmpty(draft.BirthPlace), draft.BirthDate, nullIfEmpty(draft.Karpeg), nullIfEmpty(draft.Pangkat), nullIfEmpty(draft.Jabatan),
 		nullIfEmpty(draft.LastSKPejabat), draft.LastSKTanggal, nullIfEmpty(draft.LastSKNomor), draft.LastSKTMT,
+		draft.LastSKMasaTahun, draft.LastSKMasaBulan,
+		nullIfEmpty(draft.LastKPGolongan), draft.LastKPTMT, nullIfEmpty(draft.LastKPNomor), draft.LastKPTanggal, nullIfEmpty(draft.LastKPPejabat),
+		draft.LastKPMasaTahun, draft.LastKPMasaBulan,
 		draft.MKGLamaTahun, draft.MKGLamaBulan, draft.MKGBaruTahun, draft.MKGBaruBulan,
-		nullIfEmpty(draft.MasaPerjanjian), draft.Perpanjangan).Scan(&id)
+		nullIfEmpty(draft.MasaPerjanjian), draft.Perpanjangan, tmtAwal).Scan(&id)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -196,7 +241,7 @@ func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorI
 		WHERE s.id=$1 AND t.id=s.teacher_id`, id); err != nil {
 		return Submission{}, fmt.Errorf("snapshot data BKN: %w", err)
 	}
-	detailsMap := map[string]any{"status": "menunggu_unit", "file_name": fileName, "file_size": fileSize}
+	detailsMap := map[string]any{"status": initialStatus, "file_name": fileName, "file_size": fileSize}
 	if len(change.AuditDetails) > 0 {
 		detailsMap["perubahan_data"] = change.AuditDetails
 	}
@@ -211,7 +256,7 @@ func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorI
 }
 
 // Resubmit mengubah pengajuan dikembalikan sesuai jenjang penolakan.
-func Resubmit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, proposedTMT time.Time, proposedMasaKerja *int, proposedTMTKGBLast *time.Time, change TeacherChange, draft LetterDraft, currentSalary, nextSalary, fileName, filePath string, fileSize int64, ip string) (Submission, error) {
+func Resubmit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, proposedTMT time.Time, proposedMasaKerja *int, proposedTMTKGBLast, tmtAwal *time.Time, change TeacherChange, draft LetterDraft, currentSalary, nextSalary, fileName, filePath string, fileSize int64, ip string) (Submission, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return Submission{}, err
@@ -238,14 +283,20 @@ func Resubmit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, propos
 		current_salary=$11, next_salary=$12, file_name=$13, file_path=$14, file_size=$15, rejection_note=NULL, submitted_at=now(), updated_at=now(),
 		draft_birth_place=$16, draft_birth_date=$17, draft_karpeg=$18, draft_pangkat=$19, draft_jabatan=$20,
 		draft_last_sk_pejabat=$21, draft_last_sk_tanggal=$22, draft_last_sk_nomor=$23, draft_last_sk_tmt=$24,
-		draft_mkg_lama_tahun=$25, draft_mkg_lama_bulan=$26, draft_mkg_baru_tahun=$27, draft_mkg_baru_bulan=$28,
-		draft_masa_perjanjian=$29, draft_perpanjangan_kontrak=$30 WHERE id=$31`,
+		draft_last_sk_masa_tahun=$25, draft_last_sk_masa_bulan=$26,
+		draft_last_kp_golongan=$27, draft_last_kp_tmt=$28, draft_last_kp_nomor=$29, draft_last_kp_tanggal=$30, draft_last_kp_pejabat=$31,
+		draft_last_kp_masa_tahun=$32, draft_last_kp_masa_bulan=$33,
+		draft_mkg_lama_tahun=$34, draft_mkg_lama_bulan=$35, draft_mkg_baru_tahun=$36, draft_mkg_baru_bulan=$37,
+		draft_masa_perjanjian=$38, draft_perpanjangan_kontrak=$39, tmt_awal=$41 WHERE id=$40`,
 		newStatus, proposedTMT, proposedMasaKerja, proposedTMTKGBLast, change.PangkatGol, change.Pangkat, change.Jabatan, change.UnitID, change.EffectiveDate,
 		nullIfEmpty(change.Note), currentSalary, nextSalary, fileName, filePath, fileSize,
 		nullIfEmpty(draft.BirthPlace), draft.BirthDate, nullIfEmpty(draft.Karpeg), nullIfEmpty(draft.Pangkat), nullIfEmpty(draft.Jabatan),
 		nullIfEmpty(draft.LastSKPejabat), draft.LastSKTanggal, nullIfEmpty(draft.LastSKNomor), draft.LastSKTMT,
+		draft.LastSKMasaTahun, draft.LastSKMasaBulan,
+		nullIfEmpty(draft.LastKPGolongan), draft.LastKPTMT, nullIfEmpty(draft.LastKPNomor), draft.LastKPTanggal, nullIfEmpty(draft.LastKPPejabat),
+		draft.LastKPMasaTahun, draft.LastKPMasaBulan,
 		draft.MKGLamaTahun, draft.MKGLamaBulan, draft.MKGBaruTahun, draft.MKGBaruBulan,
-		nullIfEmpty(draft.MasaPerjanjian), draft.Perpanjangan, id); err != nil {
+		nullIfEmpty(draft.MasaPerjanjian), draft.Perpanjangan, id, tmtAwal); err != nil {
 		return Submission{}, err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -290,10 +341,19 @@ func ValidateSubmissionDraft(s Submission) error {
 		LastSKNomor:    d.LastSKNomor,
 		LastSKTanggal:  d.LastSKTanggal,
 		LastSKTMT:      d.LastSKTMT,
+		LastSKMasaTahun: d.LastSKMasaTahun,
+		LastSKMasaBulan: d.LastSKMasaBulan,
 		MKGLamaTahun:   derefInt(d.MKGLamaTahun),
 		MKGLamaBulan:   derefInt(d.MKGLamaBulan),
 		MKGBaruTahun:   derefInt(d.MKGBaruTahun),
 		MKGBaruBulan:   derefInt(d.MKGBaruBulan),
+		LastKPGolongan: d.LastKPGolongan,
+		LastKPTMT:      d.LastKPTMT,
+		LastKPMasaTahun: d.LastKPMasaTahun,
+		LastKPMasaBulan: d.LastKPMasaBulan,
+		LastKPNomor:    d.LastKPNomor,
+		LastKPTanggal:  d.LastKPTanggal,
+		LastKPPejabat:  d.LastKPPejabat,
 		ProposedTMT:    s.ProposedTMT,
 		CurrentSalary:  s.CurrentSalary,
 		NextSalary:     s.NextSalary,

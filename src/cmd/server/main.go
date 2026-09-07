@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"sicendikia/internal/auth"
@@ -80,8 +81,30 @@ func main() {
 		signer = &esign.Client{BaseURL: baseURL, Username: os.Getenv("ESIGN_USERNAME"), Password: os.Getenv("ESIGN_PASSWORD")}
 	}
 	api := httpapi.NewWithDependencies(pool, secret, envOr("SECURE_COOKIE", "true") == "true", httpapi.Dependencies{
-		Files: fileStore, Renderer: pdf.NewRenderer(), Signer: signer,
+		Files: fileStore, Renderer: pdf.NewRenderer(), Signer: signer, SIPPASN: httpapi.SIPPASNSnapshotDefault(),
 	})
+	// Sinkron SIPPASN tiap malam (VPS): SIPPASN adalah sumber utama data induk.
+	if envOr("SIPPASN_NIGHTLY_SYNC", "true") == "true" {
+		interval := 24 * time.Hour
+		if v := os.Getenv("SIPPASN_NIGHTLY_INTERVAL"); v != "" {
+			if d, err := time.ParseDuration(v); err == nil && d >= time.Minute {
+				interval = d
+			}
+		}
+		var actorID int64
+		if v := os.Getenv("SIPPASN_NIGHTLY_ACTOR_ID"); v != "" {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+				actorID = n
+			}
+		}
+		if actorID == 0 {
+			actorID = store.SIPPASNSyncSystemActor(pool)
+		}
+		go func() {
+			_ = httpapi.RunNightlySIPPASNSync(context.Background(), pool, api.SIPPASN, interval, actorID)
+		}()
+		logger.Info("sinkron SIPPASN malam aktif", "interval", interval.String())
+	}
 	srv := &http.Server{Addr: addr, Handler: api.Routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 120 * time.Second}
 	logger.Info("si-cendikia mendengarkan", "addr", addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

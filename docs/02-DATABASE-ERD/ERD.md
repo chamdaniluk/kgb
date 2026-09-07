@@ -10,7 +10,7 @@
 4. **Audit trail terpisah**: semua aksi dicatat di satu tabel log yang tidak pernah di-update/dihapus.
 5. Surat final **immutable**: baris `letters` tidak pernah diubah setelah terbit.
 6. **Perubahan data lewat pengajuan KGB** (PRD F-22..F-24): nilai perubahan dibawa pengajuan; master data `teachers` diperbarui otomatis saat surat diterbitkan. Tidak ada tabel perubahan terpisah.
-7. **Gaji tidak disimpan di master** (PRD F-5, keputusan owner #8): gaji dihitung dari tabel `salary_scales` (PNS & PPPK terbaru) berdasarkan masa kerja dan pangkat/golongan; pengajuan men-snapshot hasilnya saat submit. PPPK guru golongan tetap IX.
+7. **Gaji tidak disimpan di master** (PRD F-5, keputusan owner #8): gaji dihitung dari tabel `salary_scales` (PNS & PPPK terbaru) berdasarkan masa kerja dan pangkat/golongan; pengajuan men-snapshot hasilnya saat submit. PPPK memakai golongan I–XVII sesuai SK pengangkatan (dapat dipilih saat usul KGB).
 
 ### 7a. Logika Pencarian Gaji (PENTING — jangan tertukar)
 
@@ -21,8 +21,11 @@ Gaji PNS  = salary_scales WHERE asn_type='pns'
             → pangkat/golongan DAN masa kerja sama-sama menentukan gaji.
 
 Gaji PPPK = salary_scales WHERE asn_type='pppk'
-                            AND golongan = 'IX'                 -- guru: tetap IX
+                            AND golongan = <golongan SK I-XVII>
                             AND masa_kerja_tahun = <masa kerja>
+            → golongan sesuai SK pengangkatan (PNS fix SIPPASN, PPPK editable).
+            Bila masa kerja melewati bracket tertinggi, gaji mengikuti nilai
+            tertinggi tabel (cap puncak, keputusan 2026-08-25).
 ```
 
 - KGB menaikkan gaji satu tingkat masa kerja (+2 tahun): `current_salary` = lookup masa kerja saat ini; `next_salary` = lookup masa kerja + 2 (golongan sama).
@@ -68,12 +71,13 @@ erDiagram
 
     teachers {
         int id PK
-        int user_id FK,UK "auto dibuat saat impor"
+        int user_id FK,UK "auto dibuat saat impor/sinkron"
         string nip UK
         string name
-        string asn_type UK "pns|pppk"
+        string asn_type UK "pns|pppk (dari segmen NIP)"
+        string kategori "guru|non_guru"
         int unit_id FK
-        string pangkat_gol "mis. III/a; PPPK guru: tetap IX"
+        string pangkat_gol "PNS: I/a-IV/e fix SIPPASN; PPPK: I-XVII sesuai SK"
         int masa_kerja_tahun
         date tmt_kgb_last "TMT KGB terakhir"
         timestamptz created_at
@@ -127,6 +131,7 @@ erDiagram
         int rows_updated
         int rows_skipped
         text notes
+        string asal_data "bkn_file|sippasn"
         timestamptz imported_at
     }
 
@@ -172,12 +177,12 @@ Nilai kolom `submissions.status`: `menunggu_unit`, `menunggu_dinas`, `menunggu_t
 | Tabel | Catatan penting |
 |---|---|
 | `users` | Akun ASN diprovisi otomatis saat impor BKN: `username = NIP`, `password = hash(NIP)` (kebijakan owner, F-1). Akun petugas (verifikator/pimpinan/admin) diimpor dari daftar resmi `local/akun-admin/daftar-akun-petugas.xlsx` dengan **username pola khusus, TIDAK boleh sama dengan NIP** (F-2, keputusan #9). **Kebijakan password petugas: password awal langsung berlaku (plain, tanpa paksa ganti)** — keputusan owner 2026-08-16; tetap di-hash saat disimpan. Rate-limiting login tidak pakai tabel (implementasi in-memory, seperti e-KGB) demi keringanan. |
-| `teachers` | Master data ASN hasil impor file BKN (F-18). Satu guru = satu baris. Kolom: identitas + pangkat/golongan + **masa kerja** + TMT KGB terakhir. **Tidak ada kolom gaji** — gaji dihitung dari `salary_scales`. PPPK guru: `pangkat_gol` divalidasi tetap `IX`. |
+| `teachers` | Master data ASN seluruh pegawai Dinas Pendidikan (guru + non-guru), SIPPASN sebagai sumber utama. Satu pegawai = satu baris. Kolom: identitas + jenis + kategori (`guru`/`non_guru`) + pangkat/golongan + **masa kerja** + TMT KGB terakhir. Jenis ASN dari segmen NIP (01–12 = PNS, 21–22 = PPPK). **Tidak ada kolom gaji** — gaji dihitung dari `salary_scales`. PNS: `pangkat_gol` fix dari SIPPASN; PPPK: golongan I–XVII dipilih sesuai SK saat usul KGB (default sinkron IX). |
 | `submissions` | `current_salary`/`next_salary` di-snapshot saat submit, **dihitung dari `salary_scales`** (masa kerja saat ini dan masa kerja +2, pangkat/golongan guru). `file_*` wajib terisi sebelum status meninggalkan draf. ASN boleh punya beberapa pengajuan historis (KGB tiap 2 tahun), tapi hanya satu yang aktif berproses (enforced di aplikasi). Sekaligus sarana perubahan data (PRD F-22): saat status `terbit`, nilai yang disetujui diterapkan ke `teachers` (`tmt_kgb_last ← proposed_tmt`). |
 | `letters` | Satu surat per pengajuan (`submission_id` UNIQUE). `number` dihasilkan dari `letter_number_templates` aktif saat terbit (token `{SEQ}` nomor urut per tahun, `{YEAR}` tahun; token lain bebas diisi Dinas). Setelah `issued_at` terisi, baris tidak boleh diubah. |
-| `audit_logs` | Append-only. Minimal action: `login`, `login_gagal`, `submit`, `setuju_unit`, `tolak_unit`, `setuju_dinas`, `tolak_dinas`, `tte`, `terbit`, `unduh_berkas`, `unduh_surat`, `impor_bkn`. |
-| `bkn_imports` | Riwayat impor untuk keterlacakan admin. Impor hanya sekali di awal (seeding); perubahan data selanjutnya lewat pengajuan KGB (F-22). |
-| `salary_scales` | **Wajib** (keputusan owner #8): skala gaji pokok resmi terbaru untuk PNS (PP 5/2024) dan PPPK (Perpres 11/2024) per golongan × masa kerja. Di-seed sekali; pembaruan jika ada regulasi baru. Gaji PPPK guru hanya golongan IX. |
+| `audit_logs` | Append-only. Minimal action: `login`, `login_gagal`, `submit`, `setuju_unit`, `tolak_unit`, `setuju_dinas`, `tolak_dinas`, `tte`, `terbit`, `unduh_berkas`, `unduh_surat`, `impor_bkn`, `sinkron_sippasn`, `sinkron_sippasn_malam`, `sinkron_sippasn_login`. |
+| `bkn_imports` | Riwayat impor untuk keterlacakan admin. Impor hanya sekali di awal (seeding); perubahan data selanjutnya lewat pengajuan KGB (F-22). Kolom `asal_data`: `bkn_file` (unggah manual) atau `sippasn` (sinkron API SIPP ASN, file_name `sippasn:sync`). |
+| `salary_scales` | **Wajib** (keputusan owner #8): skala gaji pokok resmi terbaru untuk PNS (PP 5/2024) dan PPPK (Perpres 11/2024) per golongan × masa kerja. Di-seed sekali; pembaruan jika ada regulasi baru. Gaji PPPK memakai golongan I–XVII sesuai SK. |
 | `letter_number_templates` | Template nomor surat yang dapat diisi/diatur Dinas (F-16). Hanya satu template `is_active = true` pada satu waktu; perubahan template tidak mengubah surat yang sudah terbit. |
 
 ## 5. Indeks & Batasan Penting

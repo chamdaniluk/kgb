@@ -131,3 +131,19 @@ func TestNominationBucketMendatangDanKosong(t *testing.T) {
 		t.Fatalf("bucket kosong = %s", got)
 	}
 }
+
+// Peninjauan masa kerja: MKG SK sebelumnya + 2, bukan dari TMT CPNS.
+func TestMasaKerjaKGBMemakaiSKSebelumnya(t *testing.T) {
+	delapan := 8
+	// TMT CPNS Des 2020 + peninjauan 4 th → SK sebelumnya MKG 8.
+	// KGB 2026: 8 + 2 = 10 (bukan 6 dari TMT).
+	got := MasaKerjaKGB(&delapan, time.Date(2020, 12, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC))
+	if got != 10 {
+		t.Errorf("MKG peninjauan = %d, want 10", got)
+	}
+	// Tanpa SK: fallback hitung TMT (6).
+	got = MasaKerjaKGB(nil, time.Date(2020, 12, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC))
+	if got != 6 {
+		t.Errorf("MKG fallback = %d, want 6", got)
+	}
+}

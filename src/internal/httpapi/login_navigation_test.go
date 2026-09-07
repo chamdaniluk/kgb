@@ -25,7 +25,7 @@ func TestAuthenticatedUserIsRedirectedAwayFromLoginPage(t *testing.T) {
 	}
 }
 
-func TestAuthenticatedAppHeaderUsesDashboardLink(t *testing.T) {
+func TestAuthenticatedAppPageIsBareSPAShell(t *testing.T) {
 	fx := newFixture(t)
 	client, _ := loginClient(t, fx.srv.URL, nipPNS, nipPNS)
 	resp, err := client.Get(fx.srv.URL + "/app")
@@ -44,10 +44,13 @@ func TestAuthenticatedAppHeaderUsesDashboardLink(t *testing.T) {
 		}
 	}
 	text := string(body)
-	if !strings.Contains(text, `href="/app"`) || !strings.Contains(text, "Dasbor") {
-		t.Fatalf("authenticated app header does not contain dashboard link: %s", text)
+	if !strings.Contains(text, `src="/static/app.js`) {
+		t.Fatalf("app page does not load app.js: %s", text)
+	}
+	if !strings.Contains(text, `id="app"`) {
+		t.Fatalf("app page does not contain SPA mount point: %s", text)
 	}
 	if strings.Contains(text, `href="/login">Masuk</a>`) {
-		t.Fatalf("authenticated app header still contains login link")
+		t.Fatalf("authenticated app page still contains login link")
 	}
 }

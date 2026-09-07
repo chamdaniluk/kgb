@@ -1,0 +1,97 @@
+package store
+
+import (
+	"context"
+	"testing"
+	"time"
+)
+
+// Alur jenjang: SD sekecamatan terlihat Korwil-nya; usulan Dinas langsung
+// menunggu_dinas; admin dinas hanya memproses unit dinas (dicek di handler).
+func TestAlurJenjangKorwilDanDinasLangsung(t *testing.T) {
+	pool := testPool(t)
+	resetSchema(t, pool)
+	ctx := context.Background()
+	if _, err := Migrate(ctx, pool, "../../migrations"); err != nil {
+		t.Fatal(err)
+	}
+
+	var korwilBrati, korwilGabus int64
+	if err := pool.QueryRow(ctx, `INSERT INTO units (code,name,type,district) VALUES ('KORWIL-BRATI','KORWILCAM BRATI','korwil','BRATI') RETURNING id`).Scan(&korwilBrati); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO units (code,name,type,district) VALUES ('KORWIL-GABUS','KORWILCAM GABUS','korwil','GABUS') RETURNING id`).Scan(&korwilGabus); err != nil {
+		t.Fatal(err)
+	}
+	// SD tanpa parent_id (kondisi live) tetapi berkecamatan BRATI.
+	var sdBrati int64
+	if err := pool.QueryRow(ctx, `INSERT INTO units (code,name,type,district) VALUES ('SDN-1-BRATI','SDN 1 BRATI','sd','BRATI') RETURNING id`).Scan(&sdBrati); err != nil {
+		t.Fatal(err)
+	}
+	var seksiDinas int64
+	if err := pool.QueryRow(ctx, `INSERT INTO units (code,name,type,district) VALUES ('SEKSI-PSDM','Seksi PSDM','dinas','DINAS') RETURNING id`).Scan(&seksiDinas); err != nil {
+		t.Fatal(err)
+	}
+
+	mkTeacher := func(nip, name string, unitID int64) int64 {
+		var uid int64
+		if err := pool.QueryRow(ctx, `INSERT INTO users (username,password_hash,role,name,unit_id) VALUES ($1,'x','asn',$2,$3) RETURNING id`, nip, name, unitID).Scan(&uid); err != nil {
+			t.Fatal(err)
+		}
+		var tid int64
+		if err := pool.QueryRow(ctx, `INSERT INTO teachers (user_id,nip,name,asn_type,unit_id,pangkat_gol,masa_kerja_tahun,masa_kerja_source) VALUES ($1,$2,$3,'pns',$4,'III/b',10,'tmt_cpns') RETURNING id`, uid, nip, name, unitID).Scan(&tid); err != nil {
+			t.Fatal(err)
+		}
+		return tid
+	}
+	tmt := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	draft := LetterDraft{BirthPlace: "Grobogan", Karpeg: "K 1", Pangkat: "Penata Muda", Jabatan: "Guru Ahli Pertama", LastSKPejabat: "Bupati", LastSKNomor: "1", MKGLamaTahun: intPtr(8), MKGLamaBulan: intPtr(0), MKGBaruTahun: intPtr(10), MKGBaruBulan: intPtr(0)}
+
+	tidSD := mkTeacher("198001012005011001", "Guru SD Brati", sdBrati)
+	tidDinas := mkTeacher("198001012005011002", "Pegawai Seksi PSDM", seksiDinas)
+
+	subSD, err := CreateSubmission(ctx, pool, tidSD, 1, tmt, intPtr(10), nil, &tmt, TeacherChange{}, draft, "100", "200", "a.pdf", "p/a.pdf", 10, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("buat usulan SD: %v", err)
+	}
+	if subSD.Status != "menunggu_unit" {
+		t.Errorf("status usulan SD = %q, ingin menunggu_unit", subSD.Status)
+	}
+	if subSD.UnitType != "sd" || subSD.UnitDistrict != "BRATI" {
+		t.Errorf("jenjang usulan SD = %q/%q, ingin sd/BRATI", subSD.UnitType, subSD.UnitDistrict)
+	}
+	subDinas, err := CreateSubmission(ctx, pool, tidDinas, 1, tmt, intPtr(10), nil, &tmt, TeacherChange{}, draft, "100", "200", "b.pdf", "p/b.pdf", 10, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("buat usulan dinas: %v", err)
+	}
+	if subDinas.Status != "menunggu_dinas" {
+		t.Errorf("status usulan dinas = %q, ingin menunggu_dinas", subDinas.Status)
+	}
+
+	// Korwil Brati melihat SD sekecamatan walau tanpa parent_id.
+	items, total, err := ListQueue(ctx, pool, "verifikator_unit", &korwilBrati, "menunggu_unit", NewPage(20, 0))
+	if err != nil {
+		t.Fatalf("antrean korwil brati: %v", err)
+	}
+	if total != 1 || len(items) != 1 || items[0].ID != subSD.ID {
+		t.Errorf("antrean korwil brati = total %d, ingin 1 usulan SD", total)
+	}
+	// Korwil Gabus tidak melihat SD Brati.
+	_, total, err = ListQueue(ctx, pool, "verifikator_unit", &korwilGabus, "menunggu_unit", NewPage(20, 0))
+	if err != nil {
+		t.Fatalf("antrean korwil gabus: %v", err)
+	}
+	if total != 0 {
+		t.Errorf("antrean korwil gabus = %d, ingin 0", total)
+	}
+
+	// UnitInScope: kecamatan sama cukup; beda kecamatan ditolak.
+	if ok, _ := UnitInScope(ctx, pool, korwilBrati, sdBrati); !ok {
+		t.Error("UnitInScope korwil brati -> SD brati = false, ingin true")
+	}
+	if ok, _ := UnitInScope(ctx, pool, korwilGabus, sdBrati); ok {
+		t.Error("UnitInScope korwil gabus -> SD brati = true, ingin false")
+	}
+}
+
+func intPtr(v int) *int { return &v }

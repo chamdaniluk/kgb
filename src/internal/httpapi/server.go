@@ -30,12 +30,15 @@ type Server struct {
 	Renderer     *pdf.Renderer
 	Signer       *esign.Client
 	Templates    *template.Template
+	AppTemplate  *template.Template
+	SIPPASN      *store.SIPPASNSnapshot
 }
 
 type Dependencies struct {
 	Files    *files.Storage
 	Renderer *pdf.Renderer
 	Signer   *esign.Client
+	SIPPASN  *store.SIPPASNSnapshot
 }
 
 func New(pool *pgxpool.Pool, sessionSecret string, secureCookie bool) *Server {
@@ -57,6 +60,8 @@ func NewWithDependencies(pool *pgxpool.Pool, sessionSecret string, secureCookie 
 		Renderer:     deps.Renderer,
 		Signer:       deps.Signer,
 		Templates:    loadTemplates(),
+		AppTemplate:  loadAppTemplate(),
+		SIPPASN:      deps.SIPPASN,
 	}
 }
 
@@ -84,6 +89,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/me", s.withAuth()(s.handleMe))
 
 	mux.HandleFunc("GET /api/v1/submissions", s.withAuth()(s.handleListSubmissions))
+	mux.HandleFunc("GET /api/v1/salary-preview", s.withAuth("asn")(s.handleSalaryPreview))
 	mux.HandleFunc("POST /api/v1/submissions", s.withAuth("asn")(s.handleCreateSubmission))
 	mux.HandleFunc("GET /api/v1/submissions/{id}", s.withAuth()(s.handleGetSubmission))
 	mux.HandleFunc("POST /api/v1/submissions/{id}/resubmit", s.withAuth("asn")(s.handleResubmit))
@@ -98,7 +104,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/verifications/dinas/{id}/approve", s.withAuth("verifikator_dinas", "admin_dinas")(s.handleDinasApprove))
 	mux.HandleFunc("POST /api/v1/verifications/dinas/{id}/reject", s.withAuth("verifikator_dinas", "admin_dinas")(s.handleDinasReject))
 
-	mux.HandleFunc("GET /api/v1/letters/pending-tte", s.withAuth("pimpinan")(s.handlePendingTTE))
+	mux.HandleFunc("GET /api/v1/letters/pending-tte", s.withAuth("pimpinan", "admin_dinas", "verifikator_dinas")(s.handlePendingTTE))
 	mux.HandleFunc("POST /api/v1/letters/{submission_id}/sign", s.withAuth("pimpinan")(s.handleSignLetter))
 	mux.HandleFunc("GET /api/v1/letters/{submission_id}/draft-docx", s.withAuth("pimpinan")(s.handleDraftDOCX))
 	mux.HandleFunc("GET /api/v1/letters/{id}/download", s.withAuth()(s.handleLetterDownload))
@@ -110,10 +116,16 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/units", s.withAuth()(s.handleAdminUnits))
 	mux.HandleFunc("POST /api/v1/admin/import-bkn", s.withAuth("admin", "admin_dinas")(s.handleImportBKN))
 	mux.HandleFunc("POST /api/v1/admin/import-users", s.withAuth("admin", "admin_dinas")(s.handleImportUsers))
+	mux.HandleFunc("POST /api/v1/admin/sync-sippasn", s.withAuth("admin", "admin_dinas")(s.handleSyncSIPPASN))
+	mux.HandleFunc("POST /api/v1/admin/sync-sippasn/preview", s.withAuth("admin", "admin_dinas")(s.handleSyncSIPPASNPreview))
+	mux.HandleFunc("GET /api/v1/admin/sync-sippasn/history", s.withAuth("admin", "admin_dinas")(s.handleSyncSIPPASNHistory))
+	mux.HandleFunc("GET /api/v1/admin/trial-notice", s.withAuth("admin", "admin_dinas")(s.handleTrialNoticeGet))
+	mux.HandleFunc("PUT /api/v1/admin/trial-notice", s.withAuth("admin", "admin_dinas")(s.handleTrialNoticePut))
 	mux.HandleFunc("GET /api/v1/admin/teachers", s.withAuth("admin", "admin_dinas")(s.handleAdminTeachers))
 	mux.HandleFunc("GET /api/v1/admin/teachers/{id}", s.withAuth("admin", "admin_dinas")(s.handleAdminTeacherDetail))
 	mux.HandleFunc("GET /api/v1/admin/units", s.withAuth("admin", "admin_dinas")(s.handleAdminUnits))
 	mux.HandleFunc("POST /api/v1/admin/units", s.withAuth("admin", "admin_dinas")(s.handleAdminCreateUnit))
+	mux.HandleFunc("PATCH /api/v1/admin/units/{id}", s.withAuth("admin", "admin_dinas")(s.handleAdminUpdateUnit))
 	mux.HandleFunc("GET /api/v1/admin/users", s.withAuth("admin", "admin_dinas")(s.handleAdminUsers))
 	mux.HandleFunc("POST /api/v1/admin/users", s.withAuth("admin", "admin_dinas")(s.handleAdminCreateUser))
 	mux.HandleFunc("PATCH /api/v1/admin/users/{id}", s.withAuth("admin", "admin_dinas")(s.handleAdminUpdateUser))
@@ -122,6 +134,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/admin/letter-number-templates", s.withAuth("admin", "admin_dinas")(s.handleAdminTemplates))
 	mux.HandleFunc("POST /api/v1/admin/letter-number-templates", s.withAuth("admin", "admin_dinas")(s.handleAdminCreateTemplate))
 	mux.HandleFunc("GET /api/v1/admin/audit-logs", s.withAuth("admin", "admin_dinas")(s.handleAdminAudit))
+	mux.HandleFunc("GET /api/v1/admin/audit-logs/actions", s.withAuth("admin", "admin_dinas")(s.handleAdminAuditActions))
+	mux.HandleFunc("GET /api/v1/admin/filter-options", s.withAuth("admin", "admin_dinas")(s.handleAdminFilterOptions))
 	return securityHeaders(mux, s.SecureCookie)
 }
 
@@ -144,7 +158,9 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNoContent)
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=604800")
+	_, _ = w.Write(logoGroboganPNG)
 }
 
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {

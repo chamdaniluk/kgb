@@ -46,6 +46,27 @@ func TestParseImportStaffMapsExcelRolesAndScopes(t *testing.T) {
 	}
 }
 
+func TestParseImportStaffMapsSignerProfile(t *testing.T) {
+	rows := [][]string{
+		{"Nama Institusi", "Role", "Username", "Password", "NIP", "Jabatan"},
+		{"Dinas Pendidikan", "Admin TTE", "admin.tte", "secret", "198001012005011002", "Kepala Dinas Pendidikan"},
+	}
+
+	got, err := parseImportStaff(rows)
+	if err != nil {
+		t.Fatalf("parseImportStaff() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len(got) = %d, want 1", len(got))
+	}
+	if got[0].EmployeeNumber != "198001012005011002" {
+		t.Errorf("EmployeeNumber = %q, want 198001012005011002", got[0].EmployeeNumber)
+	}
+	if got[0].JobTitle != "Kepala Dinas Pendidikan" {
+		t.Errorf("JobTitle = %q, want Kepala Dinas Pendidikan", got[0].JobTitle)
+	}
+}
+
 func TestParseImportStaffRejectsUnknownRole(t *testing.T) {
 	rows := [][]string{
 		{"Nama Institusi", "Role", "Username", "Password"},

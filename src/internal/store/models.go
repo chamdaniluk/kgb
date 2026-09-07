@@ -46,6 +46,9 @@ type Submission struct {
 	MasaKerjaTahun           int            `json:"masa_kerja_tahun"`
 	UnitID                   int64          `json:"unit_id"`
 	UnitName                 string         `json:"unit_name"`
+	UnitType                 string         `json:"unit_type,omitempty"`
+	UnitDistrict             string         `json:"unit_district,omitempty"`
+	UnitKorwilName           string         `json:"unit_korwil_name,omitempty"`
 	Letter                   *LetterSummary `json:"letter,omitempty"`
 	SnapshotBirthPlace       string         `json:"snapshot_birth_place,omitempty"`
 	SnapshotBirthDate        *time.Time     `json:"snapshot_birth_date,omitempty"`
@@ -65,12 +68,68 @@ type Submission struct {
 	DraftLastSKTanggal       *time.Time     `json:"draft_last_sk_tanggal,omitempty"`
 	DraftLastSKNomor         string         `json:"draft_last_sk_nomor,omitempty"`
 	DraftLastSKTMT           *time.Time     `json:"draft_last_sk_tmt,omitempty"`
+	DraftLastSKMasaTahun     *int           `json:"draft_last_sk_masa_tahun,omitempty"`
+	DraftLastSKMasaBulan     *int           `json:"draft_last_sk_masa_bulan,omitempty"`
+	DraftLastKPGolongan      string         `json:"draft_last_kp_golongan,omitempty"`
+	DraftLastKPTMT           *time.Time     `json:"draft_last_kp_tmt,omitempty"`
+	DraftLastKPNomor         string         `json:"draft_last_kp_nomor,omitempty"`
+	DraftLastKPTanggal       *time.Time     `json:"draft_last_kp_tanggal,omitempty"`
+	DraftLastKPPejabat       string         `json:"draft_last_kp_pejabat,omitempty"`
+	DraftLastKPMasaTahun     *int           `json:"draft_last_kp_masa_tahun,omitempty"`
+	DraftLastKPMasaBulan     *int           `json:"draft_last_kp_masa_bulan,omitempty"`
 	DraftMKGLamaTahun        *int           `json:"draft_mkg_lama_tahun,omitempty"`
 	DraftMKGLamaBulan        *int           `json:"draft_mkg_lama_bulan,omitempty"`
 	DraftMKGBaruTahun        *int           `json:"draft_mkg_baru_tahun,omitempty"`
 	DraftMKGBaruBulan        *int           `json:"draft_mkg_baru_bulan,omitempty"`
 	DraftMasaPerjanjian      string         `json:"draft_masa_perjanjian,omitempty"`
 	DraftPerpanjangan        *time.Time     `json:"draft_perpanjangan_kontrak,omitempty"`
+	TMTAwal                  *time.Time     `json:"tmt_awal,omitempty"`
+}
+
+// KPLast adalah SK Kenaikan Pangkat terakhir: golongan dikunci dari SIPPASN,
+// masa kerja mengikuti SK yang diterbitkan. Bila KP lebih baru dari KGB
+// terakhir, gaji KGB mengacu golongan KP; jangka waktu KGB tetap 2 tahun
+// dari KGB terakhir.
+type KPLast struct {
+	Golongan  string
+	TMT       *time.Time
+	MasaTahun *int
+	MasaBulan *int
+	Nomor     string
+	Tanggal   *time.Time
+	Pejabat   string
+}
+
+// HasData melaporkan apakah ada isian KP (golongan + TMT wajib).
+func (k KPLast) HasData() bool {
+	return k.Golongan != "" && k.TMT != nil
+}
+
+// EffectiveGolongan menentukan golongan acuan gaji: golongan KP bila ada KP
+// yang lebih baru dari KGB terakhir, selain itu golongan KGB/guru.
+func EffectiveGolongan(kp KPLast, kgbTMT *time.Time, golKGB string) string {
+	if kp.HasData() && (kgbTMT == nil || !kp.TMT.Before(*kgbTMT)) {
+		return kp.Golongan
+	}
+	return golKGB
+}
+
+// KGBLast adalah SK KGB terakhir: golongan ruang saat KGB terakhir dapat
+// diubah (bisa berbeda dari KP bila ada perubahan di tengah masa KGB),
+// masa kerja mengikuti SK yang diterbitkan.
+type KGBLast struct {
+	Golongan  string
+	TMT       *time.Time
+	MasaTahun *int
+	MasaBulan *int
+	Nomor     string
+	Tanggal   *time.Time
+	Pejabat   string
+}
+
+// HasData melaporkan apakah ada isian KGB (golongan + TMT wajib).
+func (k KGBLast) HasData() bool {
+	return k.Golongan != "" && k.TMT != nil
 }
 
 // LetterDraft adalah nilai naskah SK yang dikirim ASN pada usulan.
@@ -84,6 +143,15 @@ type LetterDraft struct {
 	LastSKTanggal  *time.Time
 	LastSKNomor    string
 	LastSKTMT      *time.Time
+	LastSKMasaTahun *int
+	LastSKMasaBulan *int
+	LastKPGolongan string
+	LastKPTMT      *time.Time
+	LastKPMasaTahun *int
+	LastKPMasaBulan *int
+	LastKPNomor    string
+	LastKPTanggal  *time.Time
+	LastKPPejabat  string
 	MKGLamaTahun   *int
 	MKGLamaBulan   *int
 	MKGBaruTahun   *int
@@ -126,6 +194,15 @@ func (s Submission) LetterDraftValues() LetterDraft {
 		LastSKTanggal:  s.DraftLastSKTanggal,
 		LastSKNomor:    s.DraftLastSKNomor,
 		LastSKTMT:      s.DraftLastSKTMT,
+		LastSKMasaTahun: s.DraftLastSKMasaTahun,
+		LastSKMasaBulan: s.DraftLastSKMasaBulan,
+		LastKPGolongan: s.DraftLastKPGolongan,
+		LastKPTMT:      s.DraftLastKPTMT,
+		LastKPNomor:    s.DraftLastKPNomor,
+		LastKPTanggal:  s.DraftLastKPTanggal,
+		LastKPPejabat:  s.DraftLastKPPejabat,
+		LastKPMasaTahun: s.DraftLastKPMasaTahun,
+		LastKPMasaBulan: s.DraftLastKPMasaBulan,
 		MKGLamaTahun:   s.DraftMKGLamaTahun,
 		MKGLamaBulan:   s.DraftMKGLamaBulan,
 		MKGBaruTahun:   s.DraftMKGBaruTahun,
@@ -162,6 +239,7 @@ type Unit struct {
 	Code       string    `json:"code"`
 	Name       string    `json:"name"`
 	Type       string    `json:"type"`
+	District   string    `json:"district,omitempty"`
 	ParentID   *int64    `json:"parent_id,omitempty"`
 	ParentName string    `json:"parent_name,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
@@ -173,9 +251,11 @@ type UserSummary struct {
 	ID        int64      `json:"id"`
 	Username  string     `json:"username"`
 	Role      string     `json:"role"`
+	RoleGroup string     `json:"role_group,omitempty"`
 	Name      string     `json:"name"`
 	UnitID    *int64     `json:"unit_id,omitempty"`
 	UnitName  *string    `json:"unit_name,omitempty"`
+	UnitType  string     `json:"unit_type,omitempty"`
 	IsActive  bool       `json:"is_active"`
 	LastLogin *time.Time `json:"last_login_at,omitempty"`
 }
@@ -232,14 +312,17 @@ type TeacherChange struct {
 	AuditDetails  map[string]any
 }
 
-// ImportedTeacher adalah baris master ASN setelah dinormalisasi dari file BKN.
+// ImportedTeacher adalah baris master ASN setelah dinormalisasi dari file BKN
+// atau sinkron SIPPASN.
 type ImportedTeacher struct {
 	NIP             string
 	Name            string
 	ASNType         string
+	Kategori        string // guru atau non_guru; kosong = guru (kompatibel impor lama)
 	UnitCode        string
 	UnitName        string
 	UnitType        string
+	UnitDistrict    string
 	ParentUnitCode  string
 	ParentUnitName  string
 	PangkatGol      string

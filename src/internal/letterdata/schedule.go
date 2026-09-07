@@ -68,6 +68,17 @@ func MasaKerjaFromTMT(tmtAwal, tmtBerlaku time.Time) int {
 	return EvenYear(yearsBetween(tmtAwal, tmtBerlaku))
 }
 
+// MasaKerjaKGB menentukan masa kerja KGB baru: masa kerja KGB sebelumnya + 2
+// tahun bila tersimpan dari SK (mencakup peninjauan masa kerja seperti wiyata
+// bakti yang sudah tercatat di SK sebelumnya); selain itu dihitung dari TMT.
+// mkgSK: masa kerja tahun menurut SK KGB terakhir (nil bila belum ada).
+func MasaKerjaKGB(mkgSK *int, tmtAwal, tmtBerlaku time.Time) int {
+	if mkgSK != nil && *mkgSK >= 0 {
+		return *mkgSK + 2
+	}
+	return MasaKerjaFromTMT(tmtAwal, tmtBerlaku)
+}
+
 const (
 	BucketBelumLengkap = "belum_lengkap"
 	BucketMendatang    = "mendatang"

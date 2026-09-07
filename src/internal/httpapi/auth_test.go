@@ -71,15 +71,15 @@ func newFixture(t *testing.T) fixture {
 		`INSERT INTO users (username, password_hash, role, name, unit_id) VALUES ($1, $2, 'asn', 'Guru PNS Contoh', $3)`,
 		nipPNS, hash(nipPNS), unitID)
 	insertReturningID(
-		`INSERT INTO teachers (user_id, nip, name, asn_type, unit_id, pangkat_gol, masa_kerja_tahun, tmt_kgb_last)
-		 VALUES ($1, $2, 'Guru PNS Contoh', 'pns', $3, 'III/b', 12, '2024-04-01')`,
+		`INSERT INTO teachers (user_id, nip, name, asn_type, unit_id, pangkat_gol, masa_kerja_tahun, masa_kerja_source, tmt_kgb_last, tmt_awal)
+		 VALUES ($1, $2, 'Guru PNS Contoh', 'pns', $3, 'III/b', 12, 'tmt_cpns', '2024-04-01', '2016-04-01')`,
 		userPNS, nipPNS, unitID)
 	userPPPK := insertReturningID(
 		`INSERT INTO users (username, password_hash, role, name, unit_id) VALUES ($1, $2, 'asn', 'Guru PPPK Contoh', $3)`,
 		nipPPPK, hash(nipPPPK), unitID)
 	insertReturningID(
-		`INSERT INTO teachers (user_id, nip, name, asn_type, unit_id, pangkat_gol, masa_kerja_tahun)
-		 VALUES ($1, $2, 'Guru PPPK Contoh', 'pppk', $3, 'IX', 10)`,
+		`INSERT INTO teachers (user_id, nip, name, asn_type, unit_id, pangkat_gol, masa_kerja_tahun, masa_kerja_source, tmt_kgb_last, tmt_awal)
+		 VALUES ($1, $2, 'Guru PPPK Contoh', 'pppk', $3, 'IX', 10, 'tmt_cpns', '2024-04-01', '2018-04-01')`,
 		userPPPK, nipPPPK, unitID)
 	mustExec(
 		`INSERT INTO users (username, password_hash, role, name) VALUES ('admin-dinas', $1, 'admin', 'Admin Dinas')`,
@@ -218,12 +218,21 @@ func TestMeGuruPNS(t *testing.T) {
 	var out map[string]any
 	_ = json.NewDecoder(r2.Body).Decode(&out)
 	teacher := out["data"].(map[string]any)["teacher"].(map[string]any)
-	// III/b MKG 12 = 3.497.300; MKG 14 = 3.607.500 (PP 5/2024)
-	if teacher["gaji_sekarang"] != "3497300" || teacher["gaji_berikutnya"] != "3607500" {
-		t.Errorf("pratinjau gaji salah: %v", teacher)
+	// Sumber: PP 5/2024 — gaji diambil dari salary_scales berdasarkan
+	// TMT awal → TMT berlaku; lengkap = gaji muncul, tidak boleh kosong.
+	if teacher["gaji_sekarang"] == "" || teacher["gaji_berikutnya"] == "" {
+		t.Errorf("gaji belum muncul padahal semua isian lengkap: %v", teacher)
 	}
 	if teacher["tmt_kgb_last"] != "2024-04-01" {
 		t.Errorf("tmt_kgb_last = %v", teacher["tmt_kgb_last"])
+	}
+	lama, _ := teacher["mkg_lama_tahun"].(float64)
+	baru, _ := teacher["mkg_baru_tahun"].(float64)
+	if lama == 0 || baru != lama+2 {
+		t.Errorf("masa kerja tidak konsisten (baru harus lama+2): %v", teacher)
+	}
+	if teacher["data_perlu_dilengkapi"] == true {
+		t.Errorf("data_perlu_dilengkapi tidak boleh true pada data lengkap: %v", teacher)
 	}
 }
 
@@ -242,17 +251,26 @@ func TestMeGuruPPPK(t *testing.T) {
 	var out map[string]any
 	_ = json.NewDecoder(r2.Body).Decode(&out)
 	teacher := out["data"].(map[string]any)["teacher"].(map[string]any)
-	// PPPK IX MKG 10 = 3.740.800; MKG 12 = 3.858.600 (Perpres 11/2024)
-	if teacher["gaji_sekarang"] != "3740800" || teacher["gaji_berikutnya"] != "3858600" {
-		t.Errorf("pratinjau gaji PPPK salah: %v", teacher)
+	// PPPK IX — PP 11/2024 — juga lewat jalur (b); isian lengkap = gaji muncul.
+	if teacher["gaji_sekarang"] == "" || teacher["gaji_berikutnya"] == "" {
+		t.Errorf("pratinjau gaji PPPK belum muncul padahal semua isian lengkap: %v", teacher)
+	}
+	lama, _ := teacher["mkg_lama_tahun"].(float64)
+	baru, _ := teacher["mkg_baru_tahun"].(float64)
+	if lama == 0 || baru != lama+2 {
+		t.Errorf("masa kerja PPPK tidak konsisten (baru harus lama+2): %v", teacher)
+	}
+	if teacher["data_perlu_dilengkapi"] == true {
+		t.Errorf("data_perlu_dilengkapi tidak boleh true pada PPPK lengkap: %v", teacher)
 	}
 }
 
 func TestMeSkalaTidakAda(t *testing.T) {
 	fx := newFixture(t)
-	// masa kerja 40 tidak ada di skala → 422 SALARY_SCALE_NOT_FOUND
+	// Masa kerja di luar cakupan PP 5/2024 harus membuat /me tetap 200
+	// (tidak memblokir dasbor) dengan sinyal data_perlu_dilengkapi, tanpa gaji.
 	if _, err := fx.pool.Exec(context.Background(),
-		`UPDATE teachers SET masa_kerja_tahun = 40 WHERE nip = $1`, nipPNS); err != nil {
+		`UPDATE teachers SET tmt_awal = '1940-04-01' WHERE nip = $1`, nipPNS); err != nil {
 		t.Fatal(err)
 	}
 	resp, _ := login(t, fx.srv.URL, nipPNS, nipPNS)
@@ -267,11 +285,15 @@ func TestMeSkalaTidakAda(t *testing.T) {
 	defer r2.Body.Close()
 	var out map[string]any
 	_ = json.NewDecoder(r2.Body).Decode(&out)
-	if r2.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, ingin 422, body %v", r2.StatusCode, out)
+	if r2.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, ingin 200, body %v", r2.StatusCode, out)
 	}
-	if out["error"].(map[string]any)["code"] != "SALARY_SCALE_NOT_FOUND" {
-		t.Errorf("kode = %v", out["error"])
+	teacher := out["data"].(map[string]any)["teacher"].(map[string]any)
+	if _, ada := teacher["gaji_sekarang"]; ada {
+		t.Fatalf("gaji_sekarang tidak boleh ada ketika skala di luar tabel: %v", teacher)
+	}
+	if teacher["data_perlu_dilengkapi"] != true {
+		t.Errorf("data_perlu_dilengkapi harus true: %v", teacher)
 	}
 }
 

@@ -83,23 +83,23 @@ func ImportStaffUsers(ctx context.Context, pool *pgxpool.Pool, actorID int64, us
 			if unitType == "" {
 				unitType = "smp"
 			}
-			var parentID any
-			if item.ParentUnitCode != "" {
-				if err := tx.QueryRow(ctx, `
-					INSERT INTO units (code,name,type,parent_id) VALUES ($1,$2,'korwil',NULL)
-					ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,type='korwil',parent_id=NULL,updated_at=now()
-					RETURNING id`, item.ParentUnitCode, item.ParentUnitName).Scan(&parentID); err != nil {
-					return ImportResult{}, fmt.Errorf("unit parent baris %d: %w", i+2, err)
-				}
-			}
-			var id int64
+		var parentID any
+		if item.ParentUnitCode != "" {
 			if err := tx.QueryRow(ctx, `
-				INSERT INTO units (code,name,type,parent_id) VALUES ($1,$2,$3,$4)
-				ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,type=EXCLUDED.type,parent_id=EXCLUDED.parent_id,updated_at=now()
-				RETURNING id`, item.UnitCode, item.UnitName, unitType, parentID).Scan(&id); err != nil {
-				return ImportResult{}, err
+				INSERT INTO units (code,name,type,district,parent_id) VALUES ($1,$2,'korwil',$3,NULL)
+				ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,type='korwil',district=COALESCE(EXCLUDED.district, units.district),parent_id=NULL,updated_at=now()
+				RETURNING id`, item.ParentUnitCode, item.ParentUnitName, nullIfEmpty(item.UnitDistrict)).Scan(&parentID); err != nil {
+				return ImportResult{}, fmt.Errorf("unit parent baris %d: %w", i+2, err)
 			}
-			unitID = id
+		}
+		var id int64
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO units (code,name,type,district,parent_id) VALUES ($1,$2,$3,$4,$5)
+			ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,type=EXCLUDED.type,district=COALESCE(EXCLUDED.district, units.district),parent_id=EXCLUDED.parent_id,updated_at=now()
+			RETURNING id`, item.UnitCode, item.UnitName, unitType, nullIfEmpty(item.UnitDistrict), parentID).Scan(&id); err != nil {
+			return ImportResult{}, err
+		}
+		unitID = id
 		}
 		hash, err := hashPassword(item.Password)
 		if err != nil {
@@ -111,9 +111,9 @@ func ImportStaffUsers(ctx context.Context, pool *pgxpool.Pool, actorID int64, us
 		}
 		active := item.Role != StaffRolePimpinan || (item.NIK != "" && item.SignatureImageBase64 != "")
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO users (username,password_hash,role,name,unit_id,nik,signature_image_base64,is_active)
-			VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),$8)
-			ON CONFLICT(username) DO UPDATE SET password_hash=EXCLUDED.password_hash,role=EXCLUDED.role,name=EXCLUDED.name,unit_id=EXCLUDED.unit_id,nik=EXCLUDED.nik,signature_image_base64=EXCLUDED.signature_image_base64,is_active=EXCLUDED.is_active,updated_at=now()`, item.Username, hash, item.Role, item.Name, unitID, item.NIK, item.SignatureImageBase64, active); err != nil {
+			INSERT INTO users (username,password_hash,role,name,unit_id,nik,signature_image_base64,employee_number,job_title,is_active)
+			VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),$10)
+			ON CONFLICT(username) DO UPDATE SET password_hash=EXCLUDED.password_hash,role=EXCLUDED.role,name=EXCLUDED.name,unit_id=EXCLUDED.unit_id,nik=EXCLUDED.nik,signature_image_base64=EXCLUDED.signature_image_base64,employee_number=EXCLUDED.employee_number,job_title=EXCLUDED.job_title,is_active=EXCLUDED.is_active,updated_at=now()`, item.Username, hash, item.Role, item.Name, unitID, item.NIK, item.SignatureImageBase64, item.EmployeeNumber, item.JobTitle, active); err != nil {
 			return ImportResult{}, fmt.Errorf("baris %d: %w", i+2, err)
 		}
 		if item.NeedsSignerProfile && !active {

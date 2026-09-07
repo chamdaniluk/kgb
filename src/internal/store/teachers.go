@@ -18,8 +18,11 @@ type Teacher struct {
 	NIP                  string     `json:"nip"`
 	Name                 string     `json:"name"`
 	ASNType              string     `json:"asn_type"`
+	Kategori             string     `json:"kategori"`
 	UnitID               int64      `json:"unit_id"`
 	UnitName             string     `json:"unit_name"`
+	UnitType             string     `json:"unit_type,omitempty"`
+	UnitDistrict         string     `json:"unit_district,omitempty"`
 	PangkatGol           string     `json:"pangkat_gol"`
 	Pangkat              string     `json:"pangkat,omitempty"`
 	Jabatan              string     `json:"jabatan,omitempty"`
@@ -31,25 +34,37 @@ type Teacher struct {
 	LastSKTMTBerlaku     *time.Time `json:"last_sk_tmt_berlaku,omitempty"`
 	LastSKMasaKerjaTahun *int       `json:"last_sk_masa_kerja_tahun,omitempty"`
 	LastSKMasaKerjaBulan *int       `json:"last_sk_masa_kerja_bulan,omitempty"`
+	LastKPGolongan       string     `json:"last_kp_golongan,omitempty"`
+	LastKPTMT            *time.Time `json:"last_kp_tmt,omitempty"`
+	LastKPNomor          string     `json:"last_kp_nomor,omitempty"`
+	LastKPMasaTahun      *int       `json:"last_kp_masa_tahun,omitempty"`
+	LastKPMasaBulan      *int       `json:"last_kp_masa_bulan,omitempty"`
+	LastSKMasaTahun      *int       `json:"last_sk_masa_tahun,omitempty"`
+	LastSKMasaBulan      *int       `json:"last_sk_masa_bulan,omitempty"`
 	BirthDate            *time.Time `json:"birth_date,omitempty"`
 	MasaKerjaTahun       int        `json:"masa_kerja_tahun"`
 	MasaKerjaSource      string     `json:"masa_kerja_source,omitempty"`
 	TMTKGBLast           *time.Time `json:"tmt_kgb_last,omitempty"`
+	TMTAwal              *time.Time `json:"tmt_awal,omitempty"`
 }
 
-const teacherCols = `t.id, t.user_id, t.nip, t.name, t.asn_type,
-       t.unit_id, un.name, t.pangkat_gol, COALESCE(t.pangkat,''), COALESCE(t.jabatan,''), t.birth_date,
+const teacherCols = `t.id, t.user_id, t.nip, t.name, t.asn_type, t.kategori,
+       t.unit_id, un.name, un.type, COALESCE(un.district,''), t.pangkat_gol, COALESCE(t.pangkat,''), COALESCE(t.jabatan,''), t.birth_date,
        COALESCE(t.birth_place,''), COALESCE(t.karpeg,''),
        COALESCE(t.last_sk_pejabat,''), t.last_sk_tanggal, COALESCE(t.last_sk_nomor,''),
        t.last_sk_tmt_berlaku, t.last_sk_masa_kerja_tahun, t.last_sk_masa_kerja_bulan,
-       t.masa_kerja_tahun, COALESCE(t.masa_kerja_source,''), t.tmt_kgb_last`
+       COALESCE(t.last_kp_golongan,''), t.last_kp_tmt, COALESCE(t.last_kp_nomor,''),
+       t.last_kp_masa_tahun, t.last_kp_masa_bulan, t.last_sk_masa_tahun, t.last_sk_masa_bulan,
+       t.masa_kerja_tahun, COALESCE(t.masa_kerja_source,''), t.tmt_kgb_last, t.tmt_awal`
 
 func scanTeacher(row pgx.Row) (Teacher, error) {
 	var t Teacher
-	err := row.Scan(&t.ID, &t.UserID, &t.NIP, &t.Name, &t.ASNType,
-		&t.UnitID, &t.UnitName, &t.PangkatGol, &t.Pangkat, &t.Jabatan, &t.BirthDate, &t.BirthPlace, &t.Karpeg,
+	err := row.Scan(&t.ID, &t.UserID, &t.NIP, &t.Name, &t.ASNType, &t.Kategori,
+		&t.UnitID, &t.UnitName, &t.UnitType, &t.UnitDistrict, &t.PangkatGol, &t.Pangkat, &t.Jabatan, &t.BirthDate, &t.BirthPlace, &t.Karpeg,
 		&t.LastSKPejabat, &t.LastSKTanggal, &t.LastSKNomor, &t.LastSKTMTBerlaku, &t.LastSKMasaKerjaTahun, &t.LastSKMasaKerjaBulan,
-		&t.MasaKerjaTahun, &t.MasaKerjaSource, &t.TMTKGBLast)
+		&t.LastKPGolongan, &t.LastKPTMT, &t.LastKPNomor,
+		&t.LastKPMasaTahun, &t.LastKPMasaBulan, &t.LastSKMasaTahun, &t.LastSKMasaBulan,
+		&t.MasaKerjaTahun, &t.MasaKerjaSource, &t.TMTKGBLast, &t.TMTAwal)
 	return t, err
 }
 
@@ -111,21 +126,25 @@ func ListTeachers(ctx context.Context, pool *pgxpool.Pool, q string, limit, offs
 }
 
 // UpsertImportedTeacher membuat atau memperbarui unit, akun ASN, dan guru.
+// SIPPASN menang untuk data induk: nama, asn_type, unit, pangkat/golongan,
+// dan jabatan selalu ditimpa dari sumber (keputusan owner 2026-09-03).
+// Kolom yang hanya milik alur KGB (masa kerja hasil terbit, TMT, dokumen)
+// tidak disentuh di sini.
 func UpsertImportedTeacher(ctx context.Context, tx pgx.Tx, t ImportedTeacher, hashPassword func(string) (string, error)) (created bool, err error) {
 	var parentID any
 	if t.ParentUnitCode != "" {
 		if err = tx.QueryRow(ctx, `
-			INSERT INTO units (code,name,type,parent_id) VALUES ($1,$2,'korwil',NULL)
-			ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name,type='korwil',parent_id=NULL,updated_at=now()
-			RETURNING id`, t.ParentUnitCode, t.ParentUnitName).Scan(&parentID); err != nil {
+			INSERT INTO units (code,name,type,district,parent_id) VALUES ($1,$2,'korwil',$3,NULL)
+			ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name,type='korwil',district=COALESCE(EXCLUDED.district, units.district),parent_id=NULL,updated_at=now()
+			RETURNING id`, t.ParentUnitCode, t.ParentUnitName, nullIfEmpty(t.UnitDistrict)).Scan(&parentID); err != nil {
 			return false, fmt.Errorf("upsert parent unit: %w", err)
 		}
 	}
 	var unitID int64
 	if err = tx.QueryRow(ctx, `
-		INSERT INTO units (code, name, type, parent_id) VALUES ($1,$2,$3,$4)
-		ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name, type=EXCLUDED.type, parent_id=EXCLUDED.parent_id, updated_at=now()
-		RETURNING id`, t.UnitCode, t.UnitName, t.UnitType, parentID).Scan(&unitID); err != nil {
+		INSERT INTO units (code, name, type, district, parent_id) VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name, type=EXCLUDED.type, district=COALESCE(EXCLUDED.district, units.district), parent_id=EXCLUDED.parent_id, updated_at=now()
+		RETURNING id`, t.UnitCode, t.UnitName, t.UnitType, nullIfEmpty(t.UnitDistrict), parentID).Scan(&unitID); err != nil {
 		return false, fmt.Errorf("upsert unit: %w", err)
 	}
 	var existingRole string
@@ -151,14 +170,18 @@ func UpsertImportedTeacher(ctx context.Context, tx pgx.Tx, t ImportedTeacher, ha
 	}
 	var existingID int64
 	err = tx.QueryRow(ctx, `SELECT id FROM teachers WHERE nip=$1`, t.NIP).Scan(&existingID)
+	kategori := t.Kategori
+	if kategori == "" {
+		kategori = KategoriGuru
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		_, err = tx.Exec(ctx, `INSERT INTO teachers (user_id,nip,name,asn_type,unit_id,pangkat_gol,pangkat,jabatan,birth_date,masa_kerja_tahun,masa_kerja_source,tmt_kgb_last) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, userID, t.NIP, t.Name, t.ASNType, unitID, t.PangkatGol, t.Pangkat, t.Jabatan, t.BirthDate, t.MasaKerjaTahun, t.MasaKerjaSource, t.TMTKGBLast)
+		_, err = tx.Exec(ctx, `INSERT INTO teachers (user_id,nip,name,asn_type,kategori,unit_id,pangkat_gol,pangkat,jabatan,birth_date,masa_kerja_tahun,masa_kerja_source,tmt_kgb_last) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, userID, t.NIP, t.Name, t.ASNType, kategori, unitID, t.PangkatGol, t.Pangkat, t.Jabatan, t.BirthDate, t.MasaKerjaTahun, t.MasaKerjaSource, t.TMTKGBLast)
 		return true, err
 	}
 	if err != nil {
 		return false, err
 	}
-	_, err = tx.Exec(ctx, `UPDATE teachers SET user_id=$1,name=$2,asn_type=$3,unit_id=$4,pangkat_gol=$5,pangkat=$6,jabatan=$7,birth_date=$8,masa_kerja_tahun=$9,masa_kerja_source=$10,tmt_kgb_last=$11,updated_at=now() WHERE id=$12`, userID, t.Name, t.ASNType, unitID, t.PangkatGol, t.Pangkat, t.Jabatan, t.BirthDate, t.MasaKerjaTahun, t.MasaKerjaSource, t.TMTKGBLast, existingID)
+	_, err = tx.Exec(ctx, `UPDATE teachers SET user_id=$1,name=$2,asn_type=$3,kategori=$4,unit_id=$5,pangkat_gol=$6,pangkat=$7,jabatan=$8,birth_date=COALESCE($9,birth_date),masa_kerja_tahun=$10,masa_kerja_source=$11,tmt_kgb_last=COALESCE($12,tmt_kgb_last),updated_at=now() WHERE id=$13`, userID, t.Name, t.ASNType, kategori, unitID, t.PangkatGol, t.Pangkat, t.Jabatan, t.BirthDate, t.MasaKerjaTahun, t.MasaKerjaSource, t.TMTKGBLast, existingID)
 	return false, err
 }
 
@@ -193,10 +216,29 @@ func ValidateImportedTeacher(t ImportedTeacher) error {
 	if t.MasaKerjaTahun < 0 {
 		return errors.New("masa kerja tidak boleh negatif")
 	}
-	if t.ASNType == "pppk" && t.PangkatGol != "IX" {
-		return errors.New("golongan PPPK guru harus IX")
+	if t.Kategori != "" && t.Kategori != KategoriGuru && t.Kategori != KategoriNonGuru {
+		return errors.New("kategori harus guru atau non_guru")
+	}
+	// PNS: golongan fix dari SIPPASN (padanan PNS I/a-IV/e).
+	// PPPK: golongan mengikuti SK pengangkatan yang diunggah (I-XVII);
+	// SIPPASN mencatat padanan PNS, admin/guru menyesuaikan saat usul KGB.
+	if t.ASNType == "pppk" && !ValidPPPKGolongan(t.PangkatGol) {
+		return errors.New("golongan PPPK harus I sampai XVII")
 	}
 	return nil
+}
+
+// golonganPPPK adalah daftar golongan PPPK resmi (Perpres 11/2024).
+var golonganPPPK = map[string]bool{
+	"I": true, "II": true, "III": true, "IV": true, "V": true,
+	"VI": true, "VII": true, "VIII": true, "IX": true, "X": true,
+	"XI": true, "XII": true, "XIII": true, "XIV": true, "XV": true,
+	"XVI": true, "XVII": true,
+}
+
+// ValidPPPKGolongan memeriksa golongan PPPK terhadap daftar resmi.
+func ValidPPPKGolongan(gol string) bool {
+	return golonganPPPK[gol]
 }
 
 // EnsureImportAudit menyimpan riwayat impor master.
@@ -213,10 +255,15 @@ func EnsureImportAudit(ctx context.Context, pool *pgxpool.Pool, actorID int64, f
 }
 
 // UpdateTeacherAfterIssue menerapkan snapshot KGB yang telah diterbitkan.
-func UpdateTeacherAfterIssue(ctx context.Context, tx pgx.Tx, teacherID int64, proposedTMT time.Time, proposedMasaKerja int, draft LetterDraft) error {
+// Seluruh field yang dapat diedit pada form usulan (termasuk pangkat_gol
+// dan unit) disinkronkan ke master teacher agar usulan yang disetujui
+// menjadi data ASN terbaru — tanpa jalur perubahan terpisah.
+func UpdateTeacherAfterIssue(ctx context.Context, tx pgx.Tx, teacherID int64, proposedTMT time.Time, proposedMasaKerja int, draft LetterDraft, pangkatGol string, unitID int64, tmtAwal *time.Time) error {
 	if proposedMasaKerja < 0 {
 		return errors.New("masa kerja snapshot tidak boleh negatif")
 	}
+	// KP terakhir: bila ada di draft, menjadi acuan golongan berikutnya.
+	// KGB terakhir: golongan efektif (KP bila lebih baru) + TMT usulan.
 	_, err := tx.Exec(ctx, `UPDATE teachers SET
 		tmt_kgb_last=$1,
 		masa_kerja_tahun=$2,
@@ -230,12 +277,24 @@ func UpdateTeacherAfterIssue(ctx context.Context, tx pgx.Tx, teacherID int64, pr
 		last_sk_tanggal=COALESCE($9, last_sk_tanggal),
 		last_sk_nomor=COALESCE(NULLIF($10,''), last_sk_nomor),
 		last_sk_tmt_berlaku=$1,
-		last_sk_masa_kerja_tahun=$2,
-		last_sk_masa_kerja_bulan=0,
+		last_sk_masa_kerja_tahun=COALESCE($11, $2),
+		last_sk_masa_kerja_bulan=COALESCE($12, 0),
+		last_kp_golongan=COALESCE(NULLIF($13,''), last_kp_golongan),
+		last_kp_tmt=COALESCE($14, last_kp_tmt),
+		last_kp_nomor=COALESCE(NULLIF($15,''), last_kp_nomor),
+		last_kp_masa_tahun=COALESCE($16, last_kp_masa_tahun),
+		last_kp_masa_bulan=COALESCE($17, last_kp_masa_bulan),
+		pangkat_gol=COALESCE(NULLIF($18,''), pangkat_gol),
+		unit_id=COALESCE($19, unit_id),
+		tmt_awal=COALESCE($20, tmt_awal),
 		updated_at=now()
-		WHERE id=$11`, proposedTMT, proposedMasaKerja,
+		WHERE id=$21`, proposedTMT, proposedMasaKerja,
 		draft.BirthPlace, draft.BirthDate, draft.Karpeg, draft.Pangkat, draft.Jabatan,
-		draft.LastSKPejabat, draft.LastSKTanggal, draft.LastSKNomor, teacherID)
+		draft.LastSKPejabat, draft.LastSKTanggal, draft.LastSKNomor,
+		draft.LastSKMasaTahun, draft.LastSKMasaBulan,
+		draft.LastKPGolongan, draft.LastKPTMT, draft.LastKPNomor,
+		draft.LastKPMasaTahun, draft.LastKPMasaBulan,
+		pangkatGol, unitID, tmtAwal, teacherID)
 	return err
 }
 

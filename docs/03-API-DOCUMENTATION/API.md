@@ -84,9 +84,12 @@ multipart/form-data:
 ```
 Aturan (semua `400/422` dengan pesan jelas):
 - Hanya boleh satu pengajuan aktif per ASN (`ALREADY_ACTIVE_SUBMISSION`).
-- Gaji dihitung otomatis saat submit dari `salary_scales` (PNS: golongan + masa kerja; PPPK: IX + masa kerja). Kombinasi tidak ditemukan → `SALARY_SCALE_NOT_FOUND`, pengajuan tidak dibuat.
-- PPPK: `pangkat_gol` harus `IX`.
-- Status awal: `menunggu_unit`. Audit: `submit`.
+- Gaji dihitung otomatis saat submit dari `salary_scales` (PNS: golongan SIPPASN + masa kerja; PPPK: golongan SK I–XVII + masa kerja). Kombinasi tidak ditemukan → `SALARY_SCALE_NOT_FOUND`, pengajuan tidak dibuat.
+- PNS: `pangkat_gol` mengikuti SIPPASN (tidak dapat diubah). PPPK: `pangkat_gol` I–XVII sesuai SK pengangkatan.
+- **KP Terakhir (opsional)**: `last_kp_golongan` + `last_kp_tmt` (+ nomor/tanggal/pejabat SK KP). Bila KP lebih baru dari KGB terakhir, gaji KGB mengacu golongan KP; jangka waktu KGB tetap 2 tahun dari KGB terakhir. Tanpa KP: golongan sama, MKG dari KGB terakhir. KP sebagian → `422`.
+- `GET /salary-preview` menerima parameter KP yang sama (`last_kp_golongan`, `last_kp_tmt`) dan mengembalikan `golongan_efektif`.
+- Status awal mengikuti jenjang unit guru: unit Dinas langsung `menunggu_dinas` (tanpa antrean unit), jenjang lain `menunggu_unit`. Audit: `submit`.
+- Setiap usulan membawa `unit_type` (TK/SD/SMP/SKB/Korwil/Dinas), `unit_district` (19 kecamatan/DINAS), dan `unit_korwil_name` (Korwil induk bila ada).
 
 ### `POST /submissions/{id}/resubmit` — submit ulang setelah ditolak
 Hanya valid bila status `dikembalikan_unit` atau `dikembalikan_dinas` (`409` jika tidak). File & TMT boleh diganti.
@@ -98,8 +101,10 @@ PDF yang diunggah (hanya milik sendiri + verifikator terkait + admin). Audit: `u
 
 ## 5. Verifikasi Unit (Korwil/SMP/SKB)
 
+Cakupan jenjang: akun Korwil melihat TK/SD sekecamatan (relasi `parent_id` ke Korwil atau kolom `district` yang sama); akun SMP/SKB melihat unitnya sendiri; akun `verifikator_unit` wajib memiliki unit. Unit Dinas tidak punya antrean unit.
+
 ### `GET /verifications/unit`
-Pengajuan berstatus `menunggu_unit` milik unit verifikator. Filter: `?status=`.
+Pengajuan berstatus `menunggu_unit` dalam cakupan verifikator. Filter: `?status=`.
 
 ### `GET /verifications/unit/{id}`
 Detail + berkas (untuk diperiksa).
@@ -117,6 +122,8 @@ Status `menunggu_unit` → `menunggu_dinas`. Audit: `setuju_unit`.
 Status → `dikembalikan_unit`. Audit: `tolak_unit`.
 
 ## 6. Verifikasi Dinas
+
+Admin Dinas melihat semua usulan (`GET` + detail) tetapi hanya dapat approve/reject usulan pegawai Dinas (`unit_type = dinas`); untuk jenjang TK/SD/SMP/SKB `POST` approve/reject mengembalikan `403 FORBIDDEN` dan hanya `verifikator_dinas` yang dapat memproses.
 
 ### `GET /verifications/dinas`
 Pengajuan berstatus `menunggu_dinas`. Filter: `?status=`.
@@ -173,12 +180,28 @@ multipart/form-data: file=<Excel/CSV BKN>
 ```
 Seeding master + provisi akun (username=NIP, password=hash(NIP)). Respons: ringkasan `{ rows_total, rows_created, rows_updated, rows_skipped, notes }`. Audit: `impor_bkn`. (Catatan: dijalankan sekali di awal; tetap tersedia untuk koreksi massal oleh admin dengan audit.)
 
+### `POST /admin/sync-sippasn` · `POST /admin/sync-sippasn/preview` · `GET /admin/sync-sippasn/history`
+Sinkronisasi master pegawai Dinas Pendidikan dari SIPP ASN (`GET {SIPPASN_BASE_URL}/api/pegawai`, tanpa kredensial; default `https://sippasn.grobogan.go.id`). SIPPASN adalah sumber utama data induk.
+Seluruh pegawai aktif Dinas Pendidikan (guru + non-guru: pelaksana, pengawas, penilik, pamong, struktural) di-upsert berkunci NIP (idempoten; akun ASN baru diprovisi username=NIP/password=hash(NIP)). Jenis ASN diturunkan dari segmen NIP (bulan 01–12 = PNS, 21–22 = PPPK); kategori guru/non-guru dari jabatan. SIPPASN menang untuk nama, jenis, kategori, unit, golongan, jabatan; kolom milik KGB (masa kerja terbit, TMT) tidak ditimpa.
+Pemetaan golongan: PNS → golongan SIPPASN apa adanya (fix); PPPK bergolongan resmi (I–XVII) → dipakai; PPPK dengan padanan PNS / belum bergolongan → default IX, dapat diubah saat usul KGB sesuai SK.
+Selain pemicu manual, sinkron berjalan otomatis tiap malam di VPS (`SIPPASN_NIGHTLY_SYNC`, default tiap 24 jam; audit `sinkron_sippasn_malam`) dan refresh per akun terjadi setiap login ASN (audit `sinkron_sippasn_login`, best-effort). Snapshot daftar SIPPASN di-cache di memori (TTL default 6 jam, `SIPPASN_SNAPSHOT_TTL`); bila SIPPASN mati, data cache terakhir tetap dipakai.
+`POST .../sync-sippasn` menerima body opsional `{ "limit": 100 }` untuk uji bertahap; respons ringkasan sinkron. `POST .../preview` hanya membaca (tanpa tulis DB, tanpa audit) dan mengembalikan hitungan + 5 contoh. `GET .../history?limit=10` membaca riwayat (`bkn_imports` asal `sippasn`).
+Hak: admin, admin_dinas. Audit: `sinkron_sippasn` (+ `sinkron_sippasn_selesai`). Env: `SIPPASN_BASE_URL`, `SIPPASN_TIMEOUT_SECONDS` (default 60).
+
 ### `GET /admin/teachers` · `GET /admin/teachers/{id}`
 Master ASN (read-only; perubahan data hanya lewat alur pengajuan).
+Filter daftar: `q`, `unit_id`, `unit_type` (sd/smp/skb/tk/korwil/dinas), `kecamatan` (19 kecamatan/DINAS; cocok ke korwil `KORWILCAM <X>` atau parent korwil). Respons teacher menyertakan `unit_type`.
+
+### `GET /admin/trial-notice` · `PUT /admin/trial-notice`
+Saklar banner "Pemberitahuan Pelaksanaan Uji Coba Internal" di beranda (diubah lewat kartu "Masa uji coba internal" di Dasbor Admin). GET mengembalikan `{enabled, until, until_tampil, until_efektif, sumber}` (`sumber`: `db` bila admin pernah menyimpan, `env` bila dari `TRIAL_UNTIL`, `default` 7 hari). PUT menerima `{enabled?, until?}` (`until`: `YYYY-MM-DD`/RFC3339, atau `null`/kosong = kembali ke env/default); tanggal salah → 422/400.
+Hak: admin, admin_dinas (UI hanya di Dasbor Admin peran `admin`). Audit: `ubah_pengumuman_uji_coba`.
 
 ### Unit & Pengguna
 - `GET /admin/units` · `POST /admin/units` — daftar/buat unit (Korwil/SMP/SKB).
 - `GET /admin/users` · `POST /admin/users` · `PATCH /admin/users/{id}` — kelola akun petugas & verifikator (termasuk penunjukan unit verifikator & pejabat TTE); nonaktifkan akun.
+- Filter daftar pengguna: `role_group` (admin/guru/unit/dinas), `q`, `unit_id`, `unit_type`, `kecamatan`. Respons menyertakan `role_group` + `unit_type`.
+- `GET /admin/filter-options` — opsi dropdown dasbor (`units`, `kecamatan`, `unit_types`, `role_groups`).
+- `GET /admin/audit-logs` — filter `action`, `actor` (nama/username), `from`/`to` (`YYYY-MM-DD`); `GET /admin/audit-logs/actions` — daftar aksi untuk dropdown.
 
 ### Skala Gaji
 - `GET /admin/salary-scales?asn_type=pns&golongan=III/a` — lihat skala.

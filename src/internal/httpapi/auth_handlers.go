@@ -59,6 +59,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Refresh data induk dari SIPPASN (sumber utama) setiap login ASN.
+	// Best-effort: gagal refresh tidak menggagalkan login.
+	s.refreshTeacherFromSIPPASN(r, user)
+
 	if err := store.TouchLastLogin(r.Context(), s.Pool, user.ID); err != nil {
 		writeErr(w, http.StatusInternalServerError, "INTERNAL", "Gagal memperbarui sesi login.")
 		return
@@ -100,6 +104,34 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 // Hash tetap dibanding walau user tidak ditemukan (anti timing-attack).
 const dummyHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+
+// refreshTeacherFromSIPPASN menyegarkan data induk akun ASN dari snapshot
+// SIPPASN sesaat setelah password lokal terverifikasi. Hanya untuk role asn
+// dengan username NIP; best-effort dengan timeout pendek agar login tidak
+// tertahan bila SIPPASN lambat. Perubahan dicatat audit sinkron_sippasn_login.
+func (s *Server) refreshTeacherFromSIPPASN(r *http.Request, user store.User) {
+	if user.Role != "asn" || !store.IsNIPUsername(user.Username) || s.SIPPASN == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	if err := s.SIPPASN.Ensure(ctx); err != nil {
+		return
+	}
+	officer, ok := s.SIPPASN.Lookup(user.Username)
+	if !ok {
+		return
+	}
+	changed, err := store.RefreshFromSIPPASN(ctx, s.Pool, officer,
+		store.SIPPASNSyncConfig{HanyaUnitPendidikan: false, HanyaStatusAktif: false}, auth.HashPassword)
+	if err != nil || !changed {
+		return
+	}
+	details, _ := json.Marshal(map[string]string{"username": user.Username, "sumber": "sippasn"})
+	_ = store.InsertAudit(ctx, s.Pool, store.AuditEntry{
+		ActorUserID: &user.ID, Action: "sinkron_sippasn_login", Details: details, IP: clientIP(r),
+	})
+}
 
 func checkPassword(user store.User, password string) bool {
 	if user.ID == 0 {
@@ -145,7 +177,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		me := map[string]any{
-			"nip": t.NIP, "asn_type": t.ASNType, "unit": t.UnitName, "unit_id": t.UnitID,
+			"nip": t.NIP, "asn_type": t.ASNType, "kategori": t.Kategori, "unit": t.UnitName, "unit_id": t.UnitID,
 			"pangkat_gol": t.PangkatGol, "pangkat": t.Pangkat, "jabatan": t.Jabatan,
 			"masa_kerja_tahun": t.MasaKerjaTahun, "masa_kerja_source": t.MasaKerjaSource,
 			"birth_place": t.BirthPlace, "karpeg": t.Karpeg,
@@ -160,6 +192,27 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		if t.LastSKTMTBerlaku != nil {
 			me["last_sk_tmt"] = t.LastSKTMTBerlaku.Format("2006-01-02")
 		}
+		if t.LastKPGolongan != "" {
+			me["last_kp_golongan"] = t.LastKPGolongan
+		}
+		if t.LastKPTMT != nil {
+			me["last_kp_tmt"] = t.LastKPTMT.Format("2006-01-02")
+		}
+		if t.LastKPNomor != "" {
+			me["last_kp_nomor"] = t.LastKPNomor
+		}
+		if t.LastKPMasaTahun != nil {
+			me["last_kp_masa_tahun"] = *t.LastKPMasaTahun
+		}
+		if t.LastKPMasaBulan != nil {
+			me["last_kp_masa_bulan"] = *t.LastKPMasaBulan
+		}
+		if t.LastSKMasaTahun != nil {
+			me["last_kgb_masa_tahun"] = *t.LastSKMasaTahun
+		}
+		if t.LastSKMasaBulan != nil {
+			me["last_kgb_masa_bulan"] = *t.LastSKMasaBulan
+		}
 		if t.LastSKMasaKerjaTahun != nil {
 			me["mkg_lama_tahun"] = *t.LastSKMasaKerjaTahun
 		}
@@ -167,9 +220,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			me["mkg_lama_bulan"] = *t.LastSKMasaKerjaBulan
 		}
 		gol := t.PangkatGol
-		if t.ASNType == "pppk" {
-			gol = "IX" // guru PPPK selalu IX (ERD §7a)
-		}
+		// PPPK memakai golongan sesuai SK (I-XVII); PNS fix dari SIPPASN.
 		if t.TMTAwal != nil {
 			me["tmt_awal"] = t.TMTAwal.Format("2006-01-02")
 		}
