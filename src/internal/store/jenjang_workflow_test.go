@@ -52,7 +52,7 @@ func TestAlurJenjangKorwilDanDinasLangsung(t *testing.T) {
 	tidDinas := mkTeacher("198001012005011002", "Pegawai Seksi PSDM", seksiDinas)
 	tidKorwil := mkTeacher("198001012005011003", "Pegawai Korwil Brati", korwilBrati)
 
-	subSD, err := CreateSubmission(ctx, pool, tidSD, 1, tmt, intPtr(10), nil, &tmt, TeacherChange{}, draft, "100", "200", "a.pdf", "p/a.pdf", 10, "127.0.0.1")
+	subSD, err := CreateSubmission(ctx, pool, tidSD, 1, tmt, intPtr(10), nil, &tmt, TeacherChange{}, draft, "100", "200", SubmissionFiles{Main: SubmissionFile{Name: "a.pdf", Path: "p/a.pdf", Size: 10}}, "127.0.0.1")
 	if err != nil {
 		t.Fatalf("buat usulan SD: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestAlurJenjangKorwilDanDinasLangsung(t *testing.T) {
 	if subSD.UnitType != "sd" || subSD.UnitDistrict != "BRATI" {
 		t.Errorf("jenjang usulan SD = %q/%q, ingin sd/BRATI", subSD.UnitType, subSD.UnitDistrict)
 	}
-	subDinas, err := CreateSubmission(ctx, pool, tidDinas, 1, tmt, intPtr(10), nil, &tmt, TeacherChange{}, draft, "100", "200", "b.pdf", "p/b.pdf", 10, "127.0.0.1")
+	subDinas, err := CreateSubmission(ctx, pool, tidDinas, 1, tmt, intPtr(10), nil, &tmt, TeacherChange{}, draft, "100", "200", SubmissionFiles{Main: SubmissionFile{Name: "b.pdf", Path: "p/b.pdf", Size: 10}}, "127.0.0.1")
 	if err != nil {
 		t.Fatalf("buat usulan dinas: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestAlurJenjangKorwilDanDinasLangsung(t *testing.T) {
 		t.Errorf("status usulan dinas = %q, ingin menunggu_dinas", subDinas.Status)
 	}
 	// Pegawai Korwil: usulannya menunggu_unit dan terlihat Korwil-nya sendiri.
-	subKorwil, err := CreateSubmission(ctx, pool, tidKorwil, 1, tmt, intPtr(10), nil, &tmt, TeacherChange{}, draft, "100", "200", "c.pdf", "p/c.pdf", 10, "127.0.0.1")
+	subKorwil, err := CreateSubmission(ctx, pool, tidKorwil, 1, tmt, intPtr(10), nil, &tmt, TeacherChange{}, draft, "100", "200", SubmissionFiles{Main: SubmissionFile{Name: "c.pdf", Path: "p/c.pdf", Size: 10}}, "127.0.0.1")
 	if err != nil {
 		t.Fatalf("buat usulan korwil: %v", err)
 	}

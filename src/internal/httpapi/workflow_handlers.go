@@ -712,6 +712,15 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusInternalServerError, "FILE_SAVE_FAILED", "Berkas gagal disimpan.")
 		return
 	}
+	// Slot berkas pendukung per jenis ASN (017): PNS = file_kp (SK KP) +
+	// file_kgb (KGB terakhir), keduanya wajib; PPPK = file_kp (SK terakhir)
+	// wajib + file_kgb (KGB terakhir) opsional + file_skp (SKP 2 tahun) wajib.
+	// Berkas utama "file" dipertahankan untuk kompatibilitas data lama.
+	slotFiles, ok := s.saveSlotFiles(w, r, t.ASNType)
+	if !ok {
+		_ = s.Files.Remove(path)
+		return
+	}
 	draft := prep.Draft
 	effectiveMasaKerja := prep.MasaBaru
 	// Reuse existing proposed_* columns to persist golongan/unit yang dipilih di form
@@ -726,9 +735,13 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 			cg.UnitID = &uid
 		}
 	}
-	sub, err := store.CreateSubmission(r.Context(), s.Pool, t.ID, userFrom(r).ID, prep.ProposedTMT, &effectiveMasaKerja, prep.LastTMT, prep.TMTAwal, cg, draft, prep.Current, prep.Next, files.OriginalName(header.Filename), path, size, clientIP(r))
+	sub, err := store.CreateSubmission(r.Context(), s.Pool, t.ID, userFrom(r).ID, prep.ProposedTMT, &effectiveMasaKerja, prep.LastTMT, prep.TMTAwal, cg, draft, prep.Current, prep.Next, store.SubmissionFiles{
+		Main: store.SubmissionFile{Name: files.OriginalName(header.Filename), Path: path, Size: size},
+		KP:   slotFiles.KP, KGB: slotFiles.KGB, SKP: slotFiles.SKP,
+	}, clientIP(r))
 	if err != nil {
 		_ = s.Files.Remove(path)
+		s.removeSlotFiles(slotFiles)
 		if mapStoreError(w, err) {
 			return
 		}
@@ -739,6 +752,80 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 }
 
 func filesMaxUploadSize() int64 { return files.MaxUploadSize }
+
+// saveSlotFiles menyimpan slot berkas pendukung sesuai jenis ASN.
+// PNS: file_kp (SK KP terakhir) + file_kgb (KGB terakhir), wajib.
+// PPPK: file_kp (SK terakhir) wajib + file_kgb (KGB terakhir) opsional +
+// file_skp (SKP 2 tahun) wajib. Tiap berkas PDF maksimal 5MB.
+// Mengembalikan false bila respons error sudah ditulis.
+func (s *Server) saveSlotFiles(w http.ResponseWriter, r *http.Request, asnType string) (store.SubmissionFiles, bool) {
+	var out store.SubmissionFiles
+	save := func(field, label string, required bool) (store.SubmissionFile, bool) {
+		f, header, err := r.FormFile(field)
+		if err != nil {
+			if !required {
+				return store.SubmissionFile{}, true
+			}
+			writeErr(w, http.StatusUnprocessableEntity, "FILE_REQUIRED", "Berkas "+label+" wajib diunggah (PDF, maksimal 5MB).")
+			return store.SubmissionFile{}, false
+		}
+		defer f.Close()
+		if header.Size > filesMaxUploadSize() {
+			writeErr(w, http.StatusUnprocessableEntity, "FILE_TOO_LARGE", "Berkas "+label+" melebihi 5MB.")
+			return store.SubmissionFile{}, false
+		}
+		path, size, err := s.Files.SavePDF(r.Context(), f, header.Filename, header.Size)
+		if err != nil {
+			if errors.Is(err, files.ErrNotPDF) {
+				writeErr(w, http.StatusUnprocessableEntity, "FILE_NOT_PDF", "Berkas "+label+" harus PDF.")
+				return store.SubmissionFile{}, false
+			}
+			if errors.Is(err, files.ErrTooLarge) {
+				writeErr(w, http.StatusUnprocessableEntity, "FILE_TOO_LARGE", "Berkas "+label+" melebihi 5MB.")
+				return store.SubmissionFile{}, false
+			}
+			writeErr(w, http.StatusInternalServerError, "FILE_SAVE_FAILED", "Berkas "+label+" gagal disimpan.")
+			return store.SubmissionFile{}, false
+		}
+		return store.SubmissionFile{Name: files.OriginalName(header.Filename), Path: path, Size: size}, true
+	}
+	var ok bool
+	if asnType == "pppk" {
+		if out.KP, ok = save("file_kp", "SK terakhir", true); !ok {
+			s.removeSlotFiles(out)
+			return out, false
+		}
+		if out.KGB, ok = save("file_kgb", "KGB terakhir", false); !ok {
+			s.removeSlotFiles(out)
+			return out, false
+		}
+		if out.SKP, ok = save("file_skp", "SKP 2 tahun", true); !ok {
+			s.removeSlotFiles(out)
+			return out, false
+		}
+		return out, true
+	}
+	if out.KP, ok = save("file_kp", "SK KP terakhir", true); !ok {
+		s.removeSlotFiles(out)
+		return out, false
+	}
+	if out.KGB, ok = save("file_kgb", "KGB terakhir", true); !ok {
+		s.removeSlotFiles(out)
+		return out, false
+	}
+	return out, true
+}
+
+func (s *Server) removeSlotFiles(f store.SubmissionFiles) {
+	if s.Files == nil {
+		return
+	}
+	for _, slot := range []store.SubmissionFile{f.KP, f.KGB, f.SKP} {
+		if slot.Path != "" {
+			_ = s.Files.Remove(slot.Path)
+		}
+	}
+}
 
 func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxMultipartMemory+1<<20)
@@ -788,6 +875,11 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, "FILE_INVALID", "Berkas harus PDF dan maksimal 5MB.")
 		return
 	}
+	slotFiles, ok := s.saveSlotFiles(w, r, t.ASNType)
+	if !ok {
+		_ = s.Files.Remove(path)
+		return
+	}
 	draft := prep.Draft
 	effectiveMasaKerja := prep.MasaBaru
 	formGol2 := strings.TrimSpace(r.FormValue("pangkat_gol"))
@@ -800,9 +892,13 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 			cg2.UnitID = &uid2
 		}
 	}
-	sub, err := store.Resubmit(r.Context(), s.Pool, id, userFrom(r).ID, prep.ProposedTMT, &effectiveMasaKerja, prep.LastTMT, prep.TMTAwal, cg2, draft, prep.Current, prep.Next, filepath.Base(header.Filename), path, size, clientIP(r))
+	sub, err := store.Resubmit(r.Context(), s.Pool, id, userFrom(r).ID, prep.ProposedTMT, &effectiveMasaKerja, prep.LastTMT, prep.TMTAwal, cg2, draft, prep.Current, prep.Next, store.SubmissionFiles{
+		Main: store.SubmissionFile{Name: filepath.Base(header.Filename), Path: path, Size: size},
+		KP:   slotFiles.KP, KGB: slotFiles.KGB, SKP: slotFiles.SKP,
+	}, clientIP(r))
 	if err != nil {
 		_ = s.Files.Remove(path)
+		s.removeSlotFiles(slotFiles)
 		if mapStoreError(w, err) {
 			return
 		}
@@ -830,11 +926,19 @@ func (s *Server) handleSubmissionFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "FORBIDDEN", "Berkas bukan dalam kewenangan Anda.")
 		return
 	}
-	if sub.FilePath == "" || s.Files == nil {
+	// Slot unduhan: ?slot=kp|kgb|skp, default berkas utama (fallback slot KP
+	// untuk data lama yang hanya punya satu berkas).
+	slot := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("slot")))
+	path, name := sub.Slot(slot)
+	if slot != "" && slot != "kp" && slot != "kgb" && slot != "skp" {
+		writeErr(w, http.StatusBadRequest, "INVALID_SLOT", "Slot berkas tidak dikenal (kp, kgb, skp).")
+		return
+	}
+	if path == "" || s.Files == nil {
 		writeErr(w, http.StatusNotFound, "FILE_NOT_FOUND", "Berkas tidak tersedia.")
 		return
 	}
-	f, err := s.Files.Open(sub.FilePath)
+	f, err := s.Files.Open(path)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "FILE_NOT_FOUND", "Berkas tidak tersedia.")
 		return
@@ -844,9 +948,16 @@ func (s *Server) handleSubmissionFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "AUDIT_FAILED", "Unduhan gagal dicatat.")
 		return
 	}
+	if name == "" {
+		name = "berkas.pdf"
+	}
 	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", `inline; filename="`+safeFilename(sub.FileName, "berkas.pdf")+`"`)
-	http.ServeContent(w, r, sub.FileName, time.Time{}, f)
+	w.Header().Set("Content-Disposition", `inline; filename="`+safeFilename(name, "berkas.pdf")+`"`)
+	// Berkas ditampilkan dalam iframe same-origin di halaman pemeriksaan;
+	// header frame global (DENY) harus dilonggarkan khusus respons ini.
+	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'self'; frame-src 'self'; img-src 'self' data:; base-uri 'self'")
+	http.ServeContent(w, r, name, time.Time{}, f)
 }
 
 func (s *Server) handleUnitQueue(w http.ResponseWriter, r *http.Request) {

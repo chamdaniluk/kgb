@@ -37,6 +37,22 @@ func submitPDFWith(t *testing.T, client *http.Client, base, csrf string, extra m
 		t.Fatal(err)
 	}
 	_, _ = part.Write([]byte("%PDF-1.4 test"))
+	// Slot berkas pendukung (017): PNS wajib file_kp + file_kgb; PPPK
+	// tambah file_skp bila extra["__skp"] diset.
+	for _, slot := range []struct{ field, name string }{{"file_kp", "sk-kp.pdf"}, {"file_kgb", "sk-kgb.pdf"}} {
+		p, err := writer.CreateFormFile(slot.field, slot.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = p.Write([]byte("%PDF-1.4 test"))
+	}
+	if _, want := extra["__skp"]; want {
+		p, err := writer.CreateFormFile("file_skp", "skp.pdf")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = p.Write([]byte("%PDF-1.4 test"))
+	}
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}

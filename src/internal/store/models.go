@@ -33,6 +33,18 @@ type Submission struct {
 	FileName                 string         `json:"file_name,omitempty"`
 	FilePath                 string         `json:"-"`
 	FileSize                 int            `json:"file_size"`
+	// Slot berkas pendukung per jenis ASN (017): PNS = SK KP + KGB terakhir
+	// (wajib); PPPK = SK terakhir (wajib) + KGB terakhir (opsional) + SKP
+	// 2 tahun (wajib). FilePath dirahasiakan; unduh via endpoint per slot.
+	FileKPName  string `json:"file_kp_name,omitempty"`
+	FileKPPath  string `json:"-"`
+	FileKPSize  int    `json:"file_kp_size,omitempty"`
+	FileKGBName string `json:"file_kgb_name,omitempty"`
+	FileKGBPath string `json:"-"`
+	FileKGBSize int    `json:"file_kgb_size,omitempty"`
+	FileSKPName string `json:"file_skp_name,omitempty"`
+	FileSKPPath string `json:"-"`
+	FileSKPSize int    `json:"file_skp_size,omitempty"`
 	RejectionNote            string         `json:"rejection_note,omitempty"`
 	SubmittedAt              *time.Time     `json:"submitted_at,omitempty"`
 	CreatedAt                time.Time      `json:"created_at"`
@@ -84,6 +96,58 @@ type Submission struct {
 	DraftMasaPerjanjian      string         `json:"draft_masa_perjanjian,omitempty"`
 	DraftPerpanjangan        *time.Time     `json:"draft_perpanjangan_kontrak,omitempty"`
 	TMTAwal                  *time.Time     `json:"tmt_awal,omitempty"`
+}
+
+// SubmissionFile adalah satu slot berkas pendukung (nama asli + path privat).
+type SubmissionFile struct {
+	Name string
+	Path string
+	Size int64
+}
+
+// SubmissionFiles menampung berkas utama + slot pendukung (017).
+// PNS: KP (SK KP) + KGB. PPPK: KP (SK terakhir) + KGB (opsional) + SKP.
+type SubmissionFiles struct {
+	Main SubmissionFile
+	KP   SubmissionFile
+	KGB  SubmissionFile
+	SKP  SubmissionFile
+}
+
+// Slot mengembalikan (path, nama) untuk slot unduhan: "" | kp | kgb | skp.
+// Slot "" memakai berkas utama bila ada, lalu fallback ke slot KP.
+func (s Submission) Slot(slot string) (path, name string) {
+	switch slot {
+	case "kp":
+		return s.FileKPPath, s.FileKPName
+	case "kgb":
+		return s.FileKGBPath, s.FileKGBName
+	case "skp":
+		return s.FileSKPPath, s.FileSKPName
+	default:
+		if s.FilePath != "" {
+			return s.FilePath, s.FileName
+		}
+		return s.FileKPPath, s.FileKPName
+	}
+}
+
+// FileNames merangkum nama berkas untuk audit (tanpa path privat).
+func FileNames(f SubmissionFiles) map[string]any {
+	out := map[string]any{}
+	if f.Main.Name != "" {
+		out["utama"] = f.Main.Name
+	}
+	if f.KP.Name != "" {
+		out["kp"] = f.KP.Name
+	}
+	if f.KGB.Name != "" {
+		out["kgb"] = f.KGB.Name
+	}
+	if f.SKP.Name != "" {
+		out["skp"] = f.SKP.Name
+	}
+	return out
 }
 
 // KPLast adalah SK Kenaikan Pangkat terakhir: golongan dikunci dari SIPPASN,
