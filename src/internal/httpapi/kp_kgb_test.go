@@ -32,13 +32,9 @@ func submitPDFWith(t *testing.T, client *http.Client, base, csrf string, extra m
 	for k, v := range fields {
 		_ = writer.WriteField(k, v)
 	}
-	part, err := writer.CreateFormFile("file", "dukungan.pdf")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = part.Write([]byte("%PDF-1.4 test"))
 	// Slot berkas pendukung (017): PNS wajib file_kp + file_kgb; PPPK
-	// tambah file_skp bila extra["__skp"] diset.
+	// tambah file_skp bila extra["__skp"] diset. Kolom "file" utama
+	// tidak lagi dipakai form (dihapus 2026-09-08).
 	for _, slot := range []struct{ field, name string }{{"file_kp", "sk-kp.pdf"}, {"file_kgb", "sk-kgb.pdf"}} {
 		p, err := writer.CreateFormFile(slot.field, slot.name)
 		if err != nil {

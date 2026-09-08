@@ -247,11 +247,6 @@ func submitPDF(t *testing.T, client *http.Client, base, csrf, date string) (*htt
 	_ = writer.WriteField("mkg_lama_bulan", "0")
 	_ = writer.WriteField("mkg_baru_tahun", "12")
 	_ = writer.WriteField("mkg_baru_bulan", "0")
-	part, err := writer.CreateFormFile("file", "dukungan.pdf")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = part.Write([]byte("%PDF-1.4\n% test\n"))
 	// Slot berkas pendukung (017): PNS wajib file_kp + file_kgb.
 	for _, slot := range []struct{ field, name string }{{"file_kp", "sk-kp.pdf"}, {"file_kgb", "sk-kgb.pdf"}} {
 		p, err := writer.CreateFormFile(slot.field, slot.name)
@@ -367,11 +362,6 @@ func TestSubmitTanpaKarpegDitolak(t *testing.T) {
 	_ = writer.WriteField("last_sk_tanggal", "2024-04-01")
 	_ = writer.WriteField("last_sk_nomor", "800/010/4.2/2024")
 	_ = writer.WriteField("last_sk_tmt", "2024-04-01")
-	part, err := writer.CreateFormFile("file", "dukungan.pdf")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = part.Write([]byte("%PDF-1.4\n% test\n"))
 	// Slot berkas pendukung (017): PNS wajib file_kp + file_kgb.
 	for _, slot := range []struct{ field, name string }{{"file_kp", "sk-kp.pdf"}, {"file_kgb", "sk-kgb.pdf"}} {
 		p, err := writer.CreateFormFile(slot.field, slot.name)
@@ -428,11 +418,6 @@ func TestSubmitMenghitungTMTGenapDariSKPertama(t *testing.T) {
 	_ = writer.WriteField("last_kp_nomor", "800.1.3.2/795/2020")
 	_ = writer.WriteField("last_kp_tanggal", "2020-11-20")
 	_ = writer.WriteField("last_kp_pejabat", "BUPATI GROBOGAN")
-	part, err := writer.CreateFormFile("file", "dukungan.pdf")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = part.Write([]byte("%PDF-1.4\n% test\n"))
 	// Slot berkas pendukung (017): PNS wajib file_kp + file_kgb.
 	for _, slot := range []struct{ field, name string }{{"file_kp", "sk-kp.pdf"}, {"file_kgb", "sk-kgb.pdf"}} {
 		p, err := writer.CreateFormFile(slot.field, slot.name)
@@ -507,11 +492,6 @@ func TestSKNaikPangkatTidakMenggeserTMTKGB(t *testing.T) {
 	_ = writer.WriteField("last_kp_nomor", "800.1.3.2/795/2026")
 	_ = writer.WriteField("last_kp_tanggal", "2026-06-20")
 	_ = writer.WriteField("last_kp_pejabat", "BUPATI GROBOGAN")
-	part, err := writer.CreateFormFile("file", "dukungan.pdf")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = part.Write([]byte("%PDF-1.4\n% test\n"))
 	// Slot berkas pendukung (017): PNS wajib file_kp + file_kgb.
 	for _, slot := range []struct{ field, name string }{{"file_kp", "sk-kp.pdf"}, {"file_kgb", "sk-kgb.pdf"}} {
 		p, err := writer.CreateFormFile(slot.field, slot.name)

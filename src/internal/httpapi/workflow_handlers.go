@@ -686,39 +686,47 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	file, header, err := r.FormFile("file")
-	if err != nil {
-		writeErr(w, http.StatusUnprocessableEntity, "FILE_REQUIRED", "Satu berkas PDF wajib diunggah.")
-		return
-	}
-	defer file.Close()
-	if header.Size > filesMaxUploadSize() {
-		writeErr(w, http.StatusUnprocessableEntity, "FILE_TOO_LARGE", "Berkas melebihi 5MB.")
-		return
-	}
-	if s.Files == nil {
-		writeErr(w, http.StatusInternalServerError, "FILE_STORAGE_NOT_CONFIGURED", "Penyimpanan berkas belum dikonfigurasi.")
-		return
-	}
-	path, size, err := s.Files.SavePDF(r.Context(), file, header.Filename, header.Size)
-	if err != nil {
-		if errors.Is(err, files.ErrNotPDF) {
-			writeErr(w, http.StatusUnprocessableEntity, "FILE_NOT_PDF", "Berkas harus PDF.")
-			return
-		}
-		if errors.Is(err, files.ErrTooLarge) {
+	hasMain := err == nil
+	var mainName, mainPath string
+	var mainSize int64
+	if hasMain {
+		defer file.Close()
+		if header.Size > filesMaxUploadSize() {
 			writeErr(w, http.StatusUnprocessableEntity, "FILE_TOO_LARGE", "Berkas melebihi 5MB.")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, "FILE_SAVE_FAILED", "Berkas gagal disimpan.")
+		if s.Files == nil {
+			writeErr(w, http.StatusInternalServerError, "FILE_STORAGE_NOT_CONFIGURED", "Penyimpanan berkas belum dikonfigurasi.")
+			return
+		}
+		var saveErr error
+		mainPath, mainSize, saveErr = s.Files.SavePDF(r.Context(), file, header.Filename, header.Size)
+		if saveErr != nil {
+			if errors.Is(saveErr, files.ErrNotPDF) {
+				writeErr(w, http.StatusUnprocessableEntity, "FILE_NOT_PDF", "Berkas harus PDF.")
+				return
+			}
+			if errors.Is(saveErr, files.ErrTooLarge) {
+				writeErr(w, http.StatusUnprocessableEntity, "FILE_TOO_LARGE", "Berkas melebihi 5MB.")
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, "FILE_SAVE_FAILED", "Berkas gagal disimpan.")
+			return
+		}
+		mainName = files.OriginalName(header.Filename)
+	} else if s.Files == nil {
+		writeErr(w, http.StatusInternalServerError, "FILE_STORAGE_NOT_CONFIGURED", "Penyimpanan berkas belum dikonfigurasi.")
 		return
 	}
 	// Slot berkas pendukung per jenis ASN (017): PNS = file_kp (SK KP) +
 	// file_kgb (KGB terakhir), keduanya wajib; PPPK = file_kp (SK terakhir)
 	// wajib + file_kgb (KGB terakhir) opsional + file_skp (SKP 2 tahun) wajib.
-	// Berkas utama "file" dipertahankan untuk kompatibilitas data lama.
+	// Kolom "file" utama tidak lagi dipakai form (dihapus 2026-09-08).
 	slotFiles, ok := s.saveSlotFiles(w, r, t.ASNType)
 	if !ok {
-		_ = s.Files.Remove(path)
+		if hasMain {
+			_ = s.Files.Remove(mainPath)
+		}
 		return
 	}
 	draft := prep.Draft
@@ -736,11 +744,13 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	sub, err := store.CreateSubmission(r.Context(), s.Pool, t.ID, userFrom(r).ID, prep.ProposedTMT, &effectiveMasaKerja, prep.LastTMT, prep.TMTAwal, cg, draft, prep.Current, prep.Next, store.SubmissionFiles{
-		Main: store.SubmissionFile{Name: files.OriginalName(header.Filename), Path: path, Size: size},
+		Main: store.SubmissionFile{Name: mainName, Path: mainPath, Size: mainSize},
 		KP:   slotFiles.KP, KGB: slotFiles.KGB, SKP: slotFiles.SKP,
 	}, clientIP(r))
 	if err != nil {
-		_ = s.Files.Remove(path)
+		if hasMain {
+			_ = s.Files.Remove(mainPath)
+		}
 		s.removeSlotFiles(slotFiles)
 		if mapStoreError(w, err) {
 			return
@@ -861,23 +871,31 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	file, header, err := r.FormFile("file")
-	if err != nil {
-		writeErr(w, http.StatusUnprocessableEntity, "FILE_REQUIRED", "Satu berkas PDF wajib diunggah.")
-		return
-	}
-	defer file.Close()
-	if s.Files == nil {
+	hasMain := err == nil
+	var mainName, mainPath string
+	var mainSize int64
+	if hasMain {
+		defer file.Close()
+		if s.Files == nil {
+			writeErr(w, http.StatusInternalServerError, "FILE_STORAGE_NOT_CONFIGURED", "Penyimpanan berkas belum dikonfigurasi.")
+			return
+		}
+		var saveErr error
+		mainPath, mainSize, saveErr = s.Files.SavePDF(r.Context(), file, header.Filename, header.Size)
+		if saveErr != nil {
+			writeErr(w, http.StatusUnprocessableEntity, "FILE_INVALID", "Berkas harus PDF dan maksimal 5MB.")
+			return
+		}
+		mainName = filepath.Base(header.Filename)
+	} else if s.Files == nil {
 		writeErr(w, http.StatusInternalServerError, "FILE_STORAGE_NOT_CONFIGURED", "Penyimpanan berkas belum dikonfigurasi.")
-		return
-	}
-	path, size, err := s.Files.SavePDF(r.Context(), file, header.Filename, header.Size)
-	if err != nil {
-		writeErr(w, http.StatusUnprocessableEntity, "FILE_INVALID", "Berkas harus PDF dan maksimal 5MB.")
 		return
 	}
 	slotFiles, ok := s.saveSlotFiles(w, r, t.ASNType)
 	if !ok {
-		_ = s.Files.Remove(path)
+		if hasMain {
+			_ = s.Files.Remove(mainPath)
+		}
 		return
 	}
 	draft := prep.Draft
@@ -893,11 +911,13 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sub, err := store.Resubmit(r.Context(), s.Pool, id, userFrom(r).ID, prep.ProposedTMT, &effectiveMasaKerja, prep.LastTMT, prep.TMTAwal, cg2, draft, prep.Current, prep.Next, store.SubmissionFiles{
-		Main: store.SubmissionFile{Name: filepath.Base(header.Filename), Path: path, Size: size},
+		Main: store.SubmissionFile{Name: mainName, Path: mainPath, Size: mainSize},
 		KP:   slotFiles.KP, KGB: slotFiles.KGB, SKP: slotFiles.SKP,
 	}, clientIP(r))
 	if err != nil {
-		_ = s.Files.Remove(path)
+		if hasMain {
+			_ = s.Files.Remove(mainPath)
+		}
 		s.removeSlotFiles(slotFiles)
 		if mapStoreError(w, err) {
 			return

@@ -34,7 +34,6 @@ func TestSubmitMultiBerkasPNSDanUnduhPerSlot(t *testing.T) {
 		_ = writer.WriteField(k, v)
 	}
 	for _, slot := range []struct{ field, name, content string }{
-		{"file", "utama.pdf", "%PDF-1.4 utama"},
 		{"file_kp", "sk-kp.pdf", "%PDF-1.4 kp"},
 		{"file_kgb", "sk-kgb.pdf", "%PDF-1.4 kgb"},
 	} {
@@ -70,10 +69,11 @@ func TestSubmitMultiBerkasPNSDanUnduhPerSlot(t *testing.T) {
 	}
 
 	// Unduh tiap slot: isi beda + header frame SAMEORIGIN.
+	// Tanpa "file" utama, slot default fallback ke slot KP.
 	for _, tc := range []struct {
 		slot, want string
 	}{
-		{"", "%PDF-1.4 utama"},
+		{"", "%PDF-1.4 kp"},
 		{"kp", "%PDF-1.4 kp"},
 		{"kgb", "%PDF-1.4 kgb"},
 	} {
