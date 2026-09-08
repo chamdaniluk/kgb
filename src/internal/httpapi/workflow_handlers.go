@@ -121,12 +121,11 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	if err != nil {
 		return preparedKGB{}, err
 	}
-	// KP terakhir: hanya PNS yang memiliki kenaikan pangkat. Golongan dikunci
-	// dari SIPPASN, masa kerja mengikuti SK yang diterbitkan. Bila KP lebih
-	// baru dari KGB terakhir, gaji KGB mengacu golongan KP; jangka waktu KGB
-	// tetap 2 tahun dari KGB terakhir. PPPK tidak punya KP — form-nya tidak
-	// menampilkan seksi ini dan isian KP lama diabaikan.
-	kp, err := parseKPLast(r, t.ASNType == "pns")
+	// KP terakhir (PNS) / SK Pertama atau Perpanjangan Kontrak (PPPK):
+	// seluruh kolom wajib. Golongan dikunci SIPPASN untuk PNS; PPPK bebas
+	// I-XVII sesuai SK. Bila SK ini lebih baru dari KGB terakhir, gaji KGB
+	// mengacu golongan SK ini; jangka waktu KGB tetap 2 tahun dari KGB.
+	kp, err := parseKPLast(r)
 	if err != nil {
 		return preparedKGB{}, err
 	}
@@ -167,16 +166,18 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	draft.LastSKNomor = kgb.Nomor
 	draft.LastSKTanggal = kgb.Tanggal
 	draft.LastSKPejabat = kgb.Pejabat
-	// Naskah SK mengikuti KP terakhir untuk PNS (pangkat/golongan dari KP bila
-	// ada, selain itu dari KGB). PPPK tidak punya KP: golongan mengikuti
-	// KGB terakhir. Tidak ada input ganda.
+	// Naskah SK mengikuti SK terbaru: pangkat/golongan dari KP (PNS) atau SK
+	// Pertama/Perpanjangan (PPPK) bila SK itu lebih baru dari KGB; selain itu
+	// dari KGB terakhir. Tidak ada input ganda.
 	if kp.HasData() {
 		if t.ASNType == "pns" {
 			draft.Pangkat = pangkatForGolongan(kp.Golongan)
-			t.PangkatGol = kp.Golongan
 		}
-	} else if t.ASNType == "pns" {
-		draft.Pangkat = pangkatForGolongan(kgb.Golongan)
+		t.PangkatGol = kp.Golongan
+	} else {
+		if t.ASNType == "pns" {
+			draft.Pangkat = pangkatForGolongan(kgb.Golongan)
+		}
 		t.PangkatGol = kgb.Golongan
 	}
 	// Jabatan wajib sesuai kategori: guru dari jenjang fungsional guru,
@@ -251,9 +252,14 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	draft.MKGBaruBulan = &bulanSK
 	// Golongan efektif: KP bila lebih baru dari KGB terakhir (jangka waktu
 	// KGB tetap 2 tahun dari KGB terakhir), selain itu golongan KGB/guru.
+	// Sebutan pangkat PNS mengikuti golongan efektif; PPPK tidak punya
+	// sebutan pangkat PNS — naskahnya memakai golongan I-XVII (template PPPK
+	// mencetak "pangkat_jabatan" langsung dari golongan).
 	gol := store.EffectiveGolongan(kp, draft.LastSKTMT, t.PangkatGol)
 	if t.ASNType == "pns" {
 		draft.Pangkat = pangkatForGolongan(gol)
+	} else if draft.Pangkat == "" {
+		draft.Pangkat = gol
 	}
 	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, masaLama)
 	if err != nil {
@@ -282,13 +288,10 @@ func firstNonEmptyForm(r *http.Request, names ...string) string {
 	return ""
 }
 
-// parseKPLast membaca seksi KP Terakhir. Untuk PNS seluruh kolom wajib:
-// golongan, TMT, masa kerja (tahun+bulan), nomor, tanggal, dan pejabat SK KP.
-// PPPK tidak memiliki KP: seluruh isian diabaikan (kp kosong).
-func parseKPLast(r *http.Request, required bool) (store.KPLast, error) {
-	if !required {
-		return store.KPLast{}, nil
-	}
+// parseKPLast membaca seksi KP Terakhir (PNS) / SK Pertama atau Perpanjangan
+// Kontrak (PPPK). Seluruh kolom wajib diisi: golongan, TMT, masa kerja
+// (tahun+bulan), nomor, tanggal, dan pejabat SK.
+func parseKPLast(r *http.Request) (store.KPLast, error) {
 	var kp store.KPLast
 	kp.Golongan = strings.TrimSpace(r.FormValue("last_kp_golongan"))
 	kp.Nomor = strings.TrimSpace(r.FormValue("last_kp_nomor"))

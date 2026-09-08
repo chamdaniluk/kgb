@@ -101,18 +101,25 @@ func ValidateDraft(d Draft) error {
 		return fmt.Errorf("%w: jenis ASN wajib pns atau pppk", ErrDraftIncomplete)
 	}
 	// Kolom bersama PNS & PPPK: identitas, SK terakhir (KGB), MKG, dan gaji.
-	// Pangkat (sebutan) hanya milik PNS — identitas PPPK adalah golongan
-	// (I-XVII) pada SK pengangkatan/perpanjangan. PPPK tidak memiliki KP.
+	// Kolom KP / SK Pertama-Perpanjangan Kontrak wajib untuk keduanya —
+	// penamaannya berbeda per jenis ASN di form, datanya sama (last_kp_*).
 	checks := []error{
 		requiredString("Tempat lahir", d.BirthPlace),
 		requiredDate("Tanggal lahir", d.BirthDate),
-		requiredString("Golongan", d.PangkatGol),
+		requiredString("Pangkat", d.Pangkat),
 		requiredString("Jabatan", d.Jabatan),
 		requiredString("Unit kerja", d.UnitName),
-		requiredString("Pejabat SK terakhir", d.LastSKPejabat),
-		requiredString("Nomor SK terakhir", d.LastSKNomor),
-		requiredDate("Tanggal SK terakhir", d.LastSKTanggal),
-		requiredDate("TMT SK terakhir", d.LastSKTMT),
+		requiredString("Golongan SK terakhir", d.LastKPGolongan),
+		requiredDate("TMT SK terakhir (KP/Perpanjangan)", d.LastKPTMT),
+		requiredYearPtr("Masa kerja SK terakhir (tahun)", d.LastKPMasaTahun),
+		requiredMonthPtr("Masa kerja SK terakhir (bulan)", d.LastKPMasaBulan),
+		requiredString("Nomor SK terakhir (KP/Perpanjangan)", d.LastKPNomor),
+		requiredDate("Tanggal SK terakhir (KP/Perpanjangan)", d.LastKPTanggal),
+		requiredString("Pejabat SK terakhir (KP/Perpanjangan)", d.LastKPPejabat),
+		requiredString("Pejabat SK KGB terakhir", d.LastSKPejabat),
+		requiredString("Nomor SK KGB terakhir", d.LastSKNomor),
+		requiredDate("Tanggal SK KGB terakhir", d.LastSKTanggal),
+		requiredDate("TMT SK KGB terakhir", d.LastSKTMT),
 		requiredYearPtr("Masa kerja KGB (tahun)", d.LastSKMasaTahun),
 		requiredMonthPtr("Masa kerja KGB (bulan)", d.LastSKMasaBulan),
 		requiredYear("Masa kerja lama (tahun)", d.MKGLamaTahun),
@@ -121,18 +128,6 @@ func ValidateDraft(d Draft) error {
 		requiredMonth("Masa kerja baru (bulan)", d.MKGBaruBulan),
 		requiredString("Gaji lama", d.CurrentSalary),
 		requiredString("Gaji baru", d.NextSalary),
-	}
-	if asn == "pns" {
-		checks = append(checks,
-			requiredString("Pangkat", d.Pangkat),
-			requiredString("Golongan KP", d.LastKPGolongan),
-			requiredDate("TMT KP", d.LastKPTMT),
-			requiredYearPtr("Masa kerja KP (tahun)", d.LastKPMasaTahun),
-			requiredMonthPtr("Masa kerja KP (bulan)", d.LastKPMasaBulan),
-			requiredString("Nomor SK KP", d.LastKPNomor),
-			requiredDate("Tanggal SK KP", d.LastKPTanggal),
-			requiredString("Pejabat SK KP", d.LastKPPejabat),
-		)
 	}
 	for _, err := range checks {
 		if err != nil {

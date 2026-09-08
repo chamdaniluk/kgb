@@ -110,7 +110,8 @@ func TestValidateDraftTMTBukanAnniversaryDitolak(t *testing.T) {
 	t.Skip("SK terakhir bisa SK naik pangkat — KGB jangkar TMT awal, bukan LastSKTMT (lihat ADR pelurusan 2026-08-20)")
 }
 
-// PPPK tidak memiliki KP: naskah PPPK tanpa satu pun kolom KP harus lolos.
+// PPPK memakai penamaan sendiri namun kolom SK Pertama/Perpanjangan Kontrak
+// (last_kp_*) tetap wajib: naskah PPPK lengkap harus lolos.
 func TestValidateDraftPPPKTanpaKPLolos(t *testing.T) {
 	d := validPNS()
 	d.ASNType = "pppk"
@@ -119,15 +120,8 @@ func TestValidateDraftPPPKTanpaKPLolos(t *testing.T) {
 	d.PangkatGol = "IX"
 	d.MasaPerjanjian = "5 tahun"
 	d.PerpanjanganDash = true
-	d.LastKPGolongan = ""
-	d.LastKPTMT = nil
-	d.LastKPMasaTahun = nil
-	d.LastKPMasaBulan = nil
-	d.LastKPNomor = ""
-	d.LastKPTanggal = nil
-	d.LastKPPejabat = ""
 	if err := ValidateDraft(d); err != nil {
-		t.Fatalf("draft PPPK tanpa KP harus lolos: %v", err)
+		t.Fatalf("draft PPPK lengkap harus lolos: %v", err)
 	}
 }
 

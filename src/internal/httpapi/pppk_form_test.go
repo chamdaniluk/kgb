@@ -12,10 +12,10 @@ import (
 	"sicendikia/internal/auth"
 )
 
-// Form PPPK berdiri sendiri (tanpa seksi KP): submit PPPK tanpa satu pun
-// kolom last_kp_* harus sukses — SK Pertama/Perpanjangan Kontrak menggantikan
-// KP sebagai SK terakhir.
-func TestSubmitPPPKTanpaKPLolos(t *testing.T) {
+// Form PPPK memakai penamaan sendiri: seksi "SK Pertama / SK Perpanjangan
+// Kontrak" (kolom last_kp_*) wajib, dan seksi KGB berlabel "SK KGB Terakhir".
+// Submit PPPK lengkap dengan kolom SK Pertama/Perpanjangan harus sukses.
+func TestSubmitPPPKDenganSKPertamaLolos(t *testing.T) {
 	fx := newFixture(t)
 	client, csrf := loginClient(t, fx.srv.URL, nipPPPK, nipPPPK)
 
@@ -28,6 +28,14 @@ func TestSubmitPPPKTanpaKPLolos(t *testing.T) {
 		"last_sk_tmt": "2024-12-01", "tmt_awal": "2021-01-01", "pangkat_gol": "IX",
 		"last_kgb_golongan": "IX", "last_kgb_masa_tahun": "4", "last_kgb_masa_bulan": "0",
 		"masa_perjanjian_kerja": "5 tahun", "perpanjangan_perjanjian_kerja": "2026-12-31",
+		// Seksi SK Pertama / SK Perpanjangan Kontrak (nama baru dari last_kp_*).
+		"last_kp_golongan":   "IX",
+		"last_kp_tmt":        "2021-01-01",
+		"last_kp_masa_tahun": "0",
+		"last_kp_masa_bulan": "0",
+		"last_kp_nomor":      "800/100/4.2/2021",
+		"last_kp_tanggal":    "2020-12-20",
+		"last_kp_pejabat":    "KEPALA DINAS PENDIDIKAN",
 	}
 	for k, v := range fields {
 		_ = writer.WriteField(k, v)
@@ -60,10 +68,63 @@ func TestSubmitPPPKTanpaKPLolos(t *testing.T) {
 	}
 	_ = json.Unmarshal(raw, &env)
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("submit PPPK tanpa KP: status=%d body=%v", resp.StatusCode, env.Error)
+		t.Fatalf("submit PPPK dengan SK Pertama: status=%d body=%v", resp.StatusCode, env.Error)
 	}
-	if v, ok := env.Data["draft_last_kp_golongan"]; ok && v != "" {
-		t.Fatalf("golongan KP PPPK harus kosong, dapat %v", v)
+	if env.Data["draft_last_kp_golongan"] != "IX" {
+		t.Fatalf("golongan SK Pertama tersimpan = %v, want IX", env.Data["draft_last_kp_golongan"])
+	}
+}
+
+// Seksi SK Pertama / Perpanjangan Kontrak wajib: submit PPPK tanpa kolom
+// last_kp_* ditolak 422.
+func TestSubmitPPPKTanpaSKPertamaDitolak(t *testing.T) {
+	fx := newFixture(t)
+	client, csrf := loginClient(t, fx.srv.URL, nipPPPK, nipPPPK)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	fields := map[string]string{
+		"birth_place": "Grobogan", "birth_date": "1985-01-01", "karpeg": "-",
+		"jabatan": "Guru Ahli Pertama", "last_sk_pejabat": "KEPALA DINAS PENDIDIKAN",
+		"last_sk_tanggal": "2024-11-07", "last_sk_nomor": "800/421/4.2/2024",
+		"last_sk_tmt": "2024-12-01", "tmt_awal": "2021-01-01", "pangkat_gol": "IX",
+		"last_kgb_golongan":     "IX",
+		"last_kgb_masa_tahun":   "4",
+		"last_kgb_masa_bulan":   "0",
+		"masa_perjanjian_kerja": "5 tahun",
+		"perpanjangan_perjanjian_kerja": "2026-12-31",
+	}
+	for k, v := range fields {
+		_ = writer.WriteField(k, v)
+	}
+	for _, slot := range []struct{ field, name string }{
+		{"file_kp", "sk-pertama.pdf"},
+		{"file_skp", "skp.pdf"},
+	} {
+		p, err := writer.CreateFormFile(slot.field, slot.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = p.Write([]byte("%PDF-1.4 test"))
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, fx.srv.URL+"/api/v1/submissions", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-CSRF-Token", csrf)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var env struct {
+		Error map[string]any `json:"error"`
+	}
+	_ = json.Unmarshal(raw, &env)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("submit PPPK tanpa SK Pertama: status=%d body=%v, want 422", resp.StatusCode, env.Error)
 	}
 }
 
