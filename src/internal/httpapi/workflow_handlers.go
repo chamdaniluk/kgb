@@ -197,9 +197,9 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 			return preparedKGB{}, err
 		}
 		switch u.Type {
-		case "sd", "tk", "smp", "skb", "dinas":
+		case "sd", "tk", "smp", "skb", "dinas", "korwil":
 		default:
-			return preparedKGB{}, errors.New("unit kerja harus unit layanan, bukan Korwil")
+			return preparedKGB{}, errors.New("unit kerja tidak dikenal")
 		}
 		t.UnitID = u.ID
 		t.UnitName = u.Name

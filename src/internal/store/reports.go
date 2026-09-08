@@ -47,10 +47,16 @@ func scopeSQL(role string, actorUnitID *int64, alias string, startArg int) (stri
 	if staffCanSeeAll(role) || actorUnitID == nil {
 		return "", nil
 	}
+	// Korwil: unitnya sendiri + TK/SD sekecamatan (parent atau district sama).
 	sql := ` AND (` + alias + ` = $` + itoa(startArg) + ` OR EXISTS (
-		SELECT 1 FROM units scope JOIN units child ON child.parent_id=scope.id
+		SELECT 1 FROM units scope JOIN units child ON child.id=` + alias + `
+		LEFT JOIN units childpar ON childpar.id = child.parent_id
 		WHERE scope.id=$` + itoa(startArg) + ` AND scope.type='korwil'
-		  AND child.id=` + alias + ` AND child.type IN ('sd','tk')))`
+		  AND child.type IN ('sd','tk') AND (
+			child.parent_id = scope.id
+			OR (childpar.type = 'korwil' AND childpar.district IS NOT NULL AND childpar.district = scope.district)
+			OR (child.district IS NOT NULL AND scope.district IS NOT NULL AND child.district = scope.district)
+		  )))`
 	return sql, []any{*actorUnitID}
 }
 

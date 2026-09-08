@@ -99,17 +99,21 @@ func GetUnitByID(ctx context.Context, pool *pgxpool.Pool, id int64) (Unit, error
 }
 
 // UnitInScope melaporkan apakah candidateID berada dalam kewenangan scopeID:
-// unit yang sama; anak TK/SD dari Korwil (relasi parent atau kecamatan sama);
-// unit Dinas hanya dalam scope unit Dinas yang sama.
+// unit yang sama; Korwil atas unitnya sendiri + anak TK/SD sekecamatan
+// (relasi parent atau kecamatan sama); unit Dinas hanya dalam scope unit
+// Dinas yang sama.
 func UnitInScope(ctx context.Context, pool *pgxpool.Pool, scopeID, candidateID int64) (bool, error) {
 	var ok bool
 	err := pool.QueryRow(ctx, `SELECT EXISTS(
 		SELECT 1 FROM units candidate JOIN units scope ON scope.id=$1
 		WHERE candidate.id=$2 AND (
 			candidate.id = scope.id
-			OR (scope.type='korwil' AND candidate.type IN ('sd','tk') AND (
-				candidate.parent_id = scope.id
-				OR (candidate.district IS NOT NULL AND scope.district IS NOT NULL AND candidate.district = scope.district)
+			OR (scope.type='korwil' AND (
+				(candidate.type = 'korwil' AND candidate.district IS NOT NULL AND scope.district IS NOT NULL AND candidate.district = scope.district)
+				OR (candidate.type IN ('sd','tk') AND (
+					candidate.parent_id = scope.id
+					OR (candidate.district IS NOT NULL AND scope.district IS NOT NULL AND candidate.district = scope.district)
+				))
 			))
 			OR (scope.type='dinas' AND candidate.type='dinas' AND candidate.district IS NOT NULL AND candidate.district = scope.district)
 		))`, scopeID, candidateID).Scan(&ok)

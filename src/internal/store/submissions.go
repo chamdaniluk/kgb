@@ -129,7 +129,8 @@ func ListSubmissionsForTeacher(ctx context.Context, pool *pgxpool.Pool, teacherI
 }
 
 // ListQueue mengambil antrean status tertentu dengan cakupan jenjang:
-// akun Korwil melihat TK/SD sekecamatan (relasi parent atau kecamatan sama),
+// akun Korwil melihat usulannya sendiri (pegawai Korwil diverifikasi sub
+// di Korwil-nya) + TK/SD sekecamatan (relasi parent atau kecamatan sama);
 // akun SMP/SKB melihat unitnya sendiri. Unit Dinas tidak punya antrean unit
 // karena usulannya langsung berstatus menunggu_dinas saat dibuat.
 // Mengembalikan potongan halaman beserta total baris (untuk pagination).
@@ -148,11 +149,14 @@ func ListQueue(ctx context.Context, pool *pgxpool.Pool, role string, unitID *int
 			WHERE actor.id = $2 AND (
 				-- SMP/SKB: unitnya sendiri
 				(actor.type IN ('smp','skb') AND cand.id = actor.id)
-				-- Korwil: TK/SD sekecamatan via parent atau kolom kecamatan
-				OR (actor.type = 'korwil' AND cand.type IN ('sd','tk') AND (
-					cand.parent_id = actor.id
-					OR (candpar.type = 'korwil' AND candpar.district IS NOT NULL AND candpar.district = actor.district)
-					OR (cand.district IS NOT NULL AND cand.district = actor.district)
+				-- Korwil: unitnya sendiri + TK/SD sekecamatan via parent/kecamatan
+				OR (actor.type = 'korwil' AND (
+					cand.id = actor.id
+					OR (cand.type IN ('sd','tk') AND (
+						cand.parent_id = actor.id
+						OR (candpar.type = 'korwil' AND candpar.district IS NOT NULL AND candpar.district = actor.district)
+						OR (cand.district IS NOT NULL AND cand.district = actor.district)
+					))
 				))
 			))`
 		args = append(args, *unitID)

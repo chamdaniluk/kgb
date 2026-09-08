@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-// Alur jenjang: SD sekecamatan terlihat Korwil-nya; usulan Dinas langsung
+// Alur jenjang: TK/SD sekecamatan terlihat Korwil-nya; pegawai Korwil
+// diverifikasi sub di Korwil-nya sendiri; usulan Dinas langsung
 // menunggu_dinas; admin dinas hanya memproses unit dinas (dicek di handler).
 func TestAlurJenjangKorwilDanDinasLangsung(t *testing.T) {
 	pool := testPool(t)
@@ -49,6 +50,7 @@ func TestAlurJenjangKorwilDanDinasLangsung(t *testing.T) {
 
 	tidSD := mkTeacher("198001012005011001", "Guru SD Brati", sdBrati)
 	tidDinas := mkTeacher("198001012005011002", "Pegawai Seksi PSDM", seksiDinas)
+	tidKorwil := mkTeacher("198001012005011003", "Pegawai Korwil Brati", korwilBrati)
 
 	subSD, err := CreateSubmission(ctx, pool, tidSD, 1, tmt, intPtr(10), nil, &tmt, TeacherChange{}, draft, "100", "200", "a.pdf", "p/a.pdf", 10, "127.0.0.1")
 	if err != nil {
@@ -67,14 +69,33 @@ func TestAlurJenjangKorwilDanDinasLangsung(t *testing.T) {
 	if subDinas.Status != "menunggu_dinas" {
 		t.Errorf("status usulan dinas = %q, ingin menunggu_dinas", subDinas.Status)
 	}
+	// Pegawai Korwil: usulannya menunggu_unit dan terlihat Korwil-nya sendiri.
+	subKorwil, err := CreateSubmission(ctx, pool, tidKorwil, 1, tmt, intPtr(10), nil, &tmt, TeacherChange{}, draft, "100", "200", "c.pdf", "p/c.pdf", 10, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("buat usulan korwil: %v", err)
+	}
+	if subKorwil.Status != "menunggu_unit" {
+		t.Errorf("status usulan korwil = %q, ingin menunggu_unit", subKorwil.Status)
+	}
+	if subKorwil.UnitType != "korwil" || subKorwil.UnitDistrict != "BRATI" {
+		t.Errorf("jenjang usulan korwil = %q/%q, ingin korwil/BRATI", subKorwil.UnitType, subKorwil.UnitDistrict)
+	}
 
 	// Korwil Brati melihat SD sekecamatan walau tanpa parent_id.
 	items, total, err := ListQueue(ctx, pool, "verifikator_unit", &korwilBrati, "menunggu_unit", NewPage(20, 0))
 	if err != nil {
 		t.Fatalf("antrean korwil brati: %v", err)
 	}
-	if total != 1 || len(items) != 1 || items[0].ID != subSD.ID {
-		t.Errorf("antrean korwil brati = total %d, ingin 1 usulan SD", total)
+	if total != 2 {
+		t.Errorf("antrean korwil brati = total %d, ingin 2 (SD + pegawai korwil)", total)
+	} else {
+		seen := map[int64]bool{}
+		for _, it := range items {
+			seen[it.ID] = true
+		}
+		if !seen[subSD.ID] || !seen[subKorwil.ID] {
+			t.Errorf("antrean korwil brati tidak memuat kedua usulan: %v", seen)
+		}
 	}
 	// Korwil Gabus tidak melihat SD Brati.
 	_, total, err = ListQueue(ctx, pool, "verifikator_unit", &korwilGabus, "menunggu_unit", NewPage(20, 0))
@@ -91,6 +112,13 @@ func TestAlurJenjangKorwilDanDinasLangsung(t *testing.T) {
 	}
 	if ok, _ := UnitInScope(ctx, pool, korwilGabus, sdBrati); ok {
 		t.Error("UnitInScope korwil gabus -> SD brati = true, ingin false")
+	}
+	// Pegawai Korwil dalam scope Korwil-nya sendiri, bukan Korwil lain.
+	if ok, _ := UnitInScope(ctx, pool, korwilBrati, korwilBrati); !ok {
+		t.Error("UnitInScope korwil brati -> korwil brati = false, ingin true")
+	}
+	if ok, _ := UnitInScope(ctx, pool, korwilGabus, korwilBrati); ok {
+		t.Error("UnitInScope korwil gabus -> korwil brati = true, ingin false")
 	}
 }
 
