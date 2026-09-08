@@ -121,10 +121,12 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	if err != nil {
 		return preparedKGB{}, err
 	}
-	// KP terakhir (opsional): golongan dikunci dari SIPPASN, masa kerja
-	// mengikuti SK yang diterbitkan. Bila KP lebih baru dari KGB terakhir,
-	// gaji KGB mengacu golongan KP; jangka waktu tetap 2 tahun dari KGB.
-	kp, err := parseKPLast(r)
+	// KP terakhir: hanya PNS yang memiliki kenaikan pangkat. Golongan dikunci
+	// dari SIPPASN, masa kerja mengikuti SK yang diterbitkan. Bila KP lebih
+	// baru dari KGB terakhir, gaji KGB mengacu golongan KP; jangka waktu KGB
+	// tetap 2 tahun dari KGB terakhir. PPPK tidak punya KP — form-nya tidak
+	// menampilkan seksi ini dan isian KP lama diabaikan.
+	kp, err := parseKPLast(r, t.ASNType == "pns")
 	if err != nil {
 		return preparedKGB{}, err
 	}
@@ -165,17 +167,16 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	draft.LastSKNomor = kgb.Nomor
 	draft.LastSKTanggal = kgb.Tanggal
 	draft.LastSKPejabat = kgb.Pejabat
-	// Naskah SK mengikuti KP terakhir: pangkat/golongan + jabatan dari KP
-	// bila ada, selain itu dari KGB. Tidak ada input ganda.
+	// Naskah SK mengikuti KP terakhir untuk PNS (pangkat/golongan dari KP bila
+	// ada, selain itu dari KGB). PPPK tidak punya KP: golongan mengikuti
+	// KGB terakhir. Tidak ada input ganda.
 	if kp.HasData() {
 		if t.ASNType == "pns" {
 			draft.Pangkat = pangkatForGolongan(kp.Golongan)
+			t.PangkatGol = kp.Golongan
 		}
-		t.PangkatGol = kp.Golongan
-	} else {
-		if t.ASNType == "pns" {
-			draft.Pangkat = pangkatForGolongan(kgb.Golongan)
-		}
+	} else if t.ASNType == "pns" {
+		draft.Pangkat = pangkatForGolongan(kgb.Golongan)
 		t.PangkatGol = kgb.Golongan
 	}
 	// Jabatan wajib sesuai kategori: guru dari jenjang fungsional guru,
@@ -281,9 +282,13 @@ func firstNonEmptyForm(r *http.Request, names ...string) string {
 	return ""
 }
 
-// parseKPLast membaca seksi KP Terakhir. Seluruh kolom wajib diisi:
+// parseKPLast membaca seksi KP Terakhir. Untuk PNS seluruh kolom wajib:
 // golongan, TMT, masa kerja (tahun+bulan), nomor, tanggal, dan pejabat SK KP.
-func parseKPLast(r *http.Request) (store.KPLast, error) {
+// PPPK tidak memiliki KP: seluruh isian diabaikan (kp kosong).
+func parseKPLast(r *http.Request, required bool) (store.KPLast, error) {
+	if !required {
+		return store.KPLast{}, nil
+	}
 	var kp store.KPLast
 	kp.Golongan = strings.TrimSpace(r.FormValue("last_kp_golongan"))
 	kp.Nomor = strings.TrimSpace(r.FormValue("last_kp_nomor"))
@@ -1247,9 +1252,12 @@ func (s *Server) handleSignLetter(w http.ResponseWriter, r *http.Request) {
 	writeData(w, http.StatusCreated, map[string]any{"number": issue.Number, "issued_at": time.Now().Format(time.RFC3339), "receipt_id": sign.ReceiptID})
 }
 
-// handleDraftDOCX mengunduh draft naskah SK dalam format DOCX untuk ditinjau
-// atau ditandatangani manual. Bersifat read-only: memakai nomor pratinjau dan
-// tidak mencadangkan sequence atau lock TTE.
+// handleDraftDOCX mengunduh draft naskah SK dalam format DOCX (Word) untuk
+// ditinjau sebelum diteruskan ke TTE. Pimpinan mengunduh saat menunggu TTE;
+// verifikator/admin Dinas ikut dapat mengunduhnya sebagai bahan pengecekan.
+// Bersifat read-only: memakai nomor pratinjau dan tidak mencadangkan sequence
+// atau lock TTE. Bila peminta bukan pimpinan, blok tanda tangan memakai
+// profil pimpinan aktif (NIK/NIP/spesimen tidak diperlukan untuk DOCX).
 func (s *Server) handleDraftDOCX(w http.ResponseWriter, r *http.Request) {
 	submissionID, err := parsePathID(r, "submission_id")
 	if err != nil {
@@ -1271,6 +1279,10 @@ func (s *Server) handleDraftDOCX(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "NOT_PENDING_TTE", "Draft hanya tersedia saat pengajuan menunggu TTE.")
 		return
 	}
+	if !s.canAccessSubmission(r, sub) {
+		writeErr(w, http.StatusForbidden, "FORBIDDEN", "Draft bukan dalam kewenangan Anda.")
+		return
+	}
 	if err := store.ValidateSubmissionDraft(sub); err != nil {
 		if !mapStoreError(w, err) {
 			writeErr(w, http.StatusUnprocessableEntity, "DRAFT_INCOMPLETE", "Naskah SK belum lengkap untuk membuat draft.")
@@ -1283,6 +1295,13 @@ func (s *Server) handleDraftDOCX(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	signer := userFrom(r)
+	if signer.Role != "pimpinan" {
+		// Petugas Dinas meninjau draft: blok tanda tangan memakai profil
+		// pimpinan aktif agar naskah sama seperti yang akan diterbitkan.
+		if p, err := store.GetActivePimpinan(r.Context(), s.Pool); err == nil {
+			signer = p
+		}
+	}
 	signerJob := ""
 	if signer.JobTitle != nil {
 		signerJob = *signer.JobTitle

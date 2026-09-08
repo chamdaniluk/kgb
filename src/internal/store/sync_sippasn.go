@@ -218,6 +218,10 @@ func sippASNUnitType(unitName string) string {
 	switch {
 	case strings.Contains(upper, "KOORDINATOR WILAYAH"):
 		return "korwil"
+	// SKB/SPNF memiliki unit verifikasi sendiri (migrasi 018); cek sebelum
+	// "DINAS PENDIDIKAN" agar tidak tertelan klasifikasi unit internal Dinas.
+	case strings.Contains(upper, "SKB") || strings.Contains(upper, "SPNF") || strings.Contains(upper, "SANGGAR KEGIATAN BELAJAR"):
+		return "skb"
 	case strings.Contains(upper, "DINAS PENDIDIKAN") && !strings.Contains(upper, "SDN ") && !strings.Contains(upper, "SMP"):
 		if strings.HasPrefix(strings.TrimSpace(upper), "DINAS PENDIDIKAN") {
 			return "dinas"
@@ -225,8 +229,6 @@ func sippASNUnitType(unitName string) string {
 		return "dinas"
 	case strings.Contains(upper, "SMP"):
 		return "smp"
-	case strings.Contains(upper, "SKB") || strings.Contains(upper, "SPNF"):
-		return "skb"
 	case strings.Contains(upper, "TK "):
 		return "tk"
 	default:
@@ -245,9 +247,13 @@ var sippASNDistricts = []string{
 
 // sippASNDistrict menebak kecamatan unit dari nama SIPP ASN. Unit internal
 // Dinas memakai "DINAS"; sekolah memakai nama kecamatan yang muncul di nama
-// unit; Korwil memakai kecamatannya sendiri.
+// unit; Korwil memakai kecamatannya sendiri. SKB/SPNF lokasinya di Kec.
+// Purwodadi (bukan "DINAS") meski namanya mengandung "Dinas Pendidikan".
 func sippASNDistrict(unitName, unitType string) string {
 	upper := strings.ToUpper(strings.TrimSpace(unitName))
+	if unitType == "skb" {
+		return "PURWODADI"
+	}
 	if unitType == "dinas" || unitType == "korwil" {
 		for _, d := range sippASNDistricts {
 			if strings.Contains(upper, d) {

@@ -100,19 +100,15 @@ func ValidateDraft(d Draft) error {
 	if asn != "pns" && asn != "pppk" {
 		return fmt.Errorf("%w: jenis ASN wajib pns atau pppk", ErrDraftIncomplete)
 	}
+	// Kolom bersama PNS & PPPK: identitas, SK terakhir (KGB), MKG, dan gaji.
+	// Pangkat (sebutan) hanya milik PNS — identitas PPPK adalah golongan
+	// (I-XVII) pada SK pengangkatan/perpanjangan. PPPK tidak memiliki KP.
 	checks := []error{
 		requiredString("Tempat lahir", d.BirthPlace),
 		requiredDate("Tanggal lahir", d.BirthDate),
-		requiredString("Pangkat", d.Pangkat),
+		requiredString("Golongan", d.PangkatGol),
 		requiredString("Jabatan", d.Jabatan),
 		requiredString("Unit kerja", d.UnitName),
-		requiredString("Golongan KP", d.LastKPGolongan),
-		requiredDate("TMT KP", d.LastKPTMT),
-		requiredYearPtr("Masa kerja KP (tahun)", d.LastKPMasaTahun),
-		requiredMonthPtr("Masa kerja KP (bulan)", d.LastKPMasaBulan),
-		requiredString("Nomor SK KP", d.LastKPNomor),
-		requiredDate("Tanggal SK KP", d.LastKPTanggal),
-		requiredString("Pejabat SK KP", d.LastKPPejabat),
 		requiredString("Pejabat SK terakhir", d.LastSKPejabat),
 		requiredString("Nomor SK terakhir", d.LastSKNomor),
 		requiredDate("Tanggal SK terakhir", d.LastSKTanggal),
@@ -125,6 +121,18 @@ func ValidateDraft(d Draft) error {
 		requiredMonth("Masa kerja baru (bulan)", d.MKGBaruBulan),
 		requiredString("Gaji lama", d.CurrentSalary),
 		requiredString("Gaji baru", d.NextSalary),
+	}
+	if asn == "pns" {
+		checks = append(checks,
+			requiredString("Pangkat", d.Pangkat),
+			requiredString("Golongan KP", d.LastKPGolongan),
+			requiredDate("TMT KP", d.LastKPTMT),
+			requiredYearPtr("Masa kerja KP (tahun)", d.LastKPMasaTahun),
+			requiredMonthPtr("Masa kerja KP (bulan)", d.LastKPMasaBulan),
+			requiredString("Nomor SK KP", d.LastKPNomor),
+			requiredDate("Tanggal SK KP", d.LastKPTanggal),
+			requiredString("Pejabat SK KP", d.LastKPPejabat),
+		)
 	}
 	for _, err := range checks {
 		if err != nil {

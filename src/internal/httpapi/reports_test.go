@@ -82,8 +82,15 @@ func TestIssuedHistoryHanyaScopeUnit(t *testing.T) {
 func TestNominasiMemakaiJendelaEnamSampaiTigaBulan(t *testing.T) {
 	fx := newFixture(t)
 	ctx := context.Background()
-	next := time.Now().AddDate(0, 4, 0)
-	if _, err := fx.pool.Exec(ctx, `UPDATE teachers SET tmt_kgb_last=$1 WHERE nip=$2`, next.AddDate(-2, 0, 0), nipPNS); err != nil {
+	// NextDueTMT menagih anniversary dua tahunan dari TMT awal setelah SK
+	// terakhir. Set tmt_awal = target - 10 tahun (grid 2 tahunan melewati
+	// target) dan SK terakhir = target - 2 tahun, sehingga TMT yang ditagih
+	// tepat target = asOf + 4 bulan → bucket nominasi (3–6 bulan).
+	target := time.Now().AddDate(0, 4, 0)
+	if _, err := fx.pool.Exec(ctx, `UPDATE teachers SET tmt_awal=$1 WHERE nip=$2`, target.AddDate(-10, 0, 0), nipPNS); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.pool.Exec(ctx, `UPDATE teachers SET tmt_kgb_last=$1, last_sk_tmt_berlaku=$1 WHERE nip=$2`, target.AddDate(-2, 0, 0), nipPNS); err != nil {
 		t.Fatal(err)
 	}
 	hash, err := auth.HashPassword("sandi")

@@ -62,6 +62,16 @@ func GetUserByID(ctx context.Context, pool *pgxpool.Pool, id int64) (User, error
 	return u, err
 }
 
+// GetActivePimpinan mengambil akun pimpinan aktif pertama sebagai penandatangan
+// draft naskah SK yang ditinjau petugas Dinas (draft DOCX read-only).
+func GetActivePimpinan(ctx context.Context, pool *pgxpool.Pool) (User, error) {
+	u, err := scanUser(pool.QueryRow(ctx, `SELECT `+userCols+` WHERE u.role = 'pimpinan' AND u.is_active ORDER BY u.id LIMIT 1`))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrNotFound
+	}
+	return u, err
+}
+
 func TouchLastLogin(ctx context.Context, pool *pgxpool.Pool, userID int64) error {
 	_, err := pool.Exec(ctx, `UPDATE users SET last_login_at = now(), updated_at = now() WHERE id = $1`, userID)
 	return err

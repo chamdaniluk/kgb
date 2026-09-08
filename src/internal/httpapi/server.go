@@ -106,7 +106,7 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("GET /api/v1/letters/pending-tte", s.withAuth("pimpinan", "admin_dinas", "verifikator_dinas")(s.handlePendingTTE))
 	mux.HandleFunc("POST /api/v1/letters/{submission_id}/sign", s.withAuth("pimpinan")(s.handleSignLetter))
-	mux.HandleFunc("GET /api/v1/letters/{submission_id}/draft-docx", s.withAuth("pimpinan")(s.handleDraftDOCX))
+	mux.HandleFunc("GET /api/v1/letters/{submission_id}/draft-docx", s.withAuth("pimpinan", "admin_dinas", "verifikator_dinas")(s.handleDraftDOCX))
 	mux.HandleFunc("GET /api/v1/letters/{id}/download", s.withAuth()(s.handleLetterDownload))
 	mux.HandleFunc("GET /api/v1/letters", s.withAuth("verifikator_dinas", "admin_dinas", "pimpinan", "admin")(s.handleListLetters))
 	mux.HandleFunc("GET /api/v1/reports/issued", s.withAuth(staffReportRoles()...)(s.handleIssuedHistory))

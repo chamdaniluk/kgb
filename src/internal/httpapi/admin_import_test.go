@@ -36,7 +36,9 @@ func TestParseImportStaffMapsExcelRolesAndScopes(t *testing.T) {
 	if got[3].Role != "verifikator_unit" || got[3].UnitType != "smp" || got[3].ParentUnitName != "KORWILCAM BRATI" {
 		t.Fatalf("Admin SMP mapping = %#v", got[3])
 	}
-	if got[4].UnitType != "skb" || got[4].ParentUnitName != "KORWILCAM GROBOGAN" {
+	// SKB memiliki unit verifikasi sendiri tanpa parent Korwil dan lokasinya
+	// selalu Kec. Purwodadi (migrasi 018).
+	if got[4].UnitType != "skb" || got[4].ParentUnitName != "" || got[4].UnitDistrict != "PURWODADI" {
 		t.Fatalf("Admin SKB mapping = %#v", got[4])
 	}
 	for _, item := range got {

@@ -220,6 +220,11 @@ func parseBKNUnit(raw string) (parsedBKNUnit, error) {
 	if district == "" {
 		district = bknDistrictFromSchoolName(school)
 	}
+	if unitType == "skb" {
+		// SKB lokasinya selalu Kec. Purwodadi dan memiliki unit verifikasi
+		// sendiri (migrasi 018) — tidak bergantung parent Korwil.
+		district = "PURWODADI"
+	}
 	if district == "" {
 		return parsedBKNUnit{}, fmt.Errorf("kecamatan unit BKN tidak dapat dipetakan: %q", school)
 	}
@@ -363,13 +368,19 @@ func parseImportStaff(rows [][]string) ([]store.ImportedStaffUser, error) {
 			} else {
 				unitType = "smp"
 			}
-			if unitType == "smp" || unitType == "skb" {
+			if unitType == "smp" {
 				parentName = korwilNameFromInstitution(institution)
 				parentCode = institutionCode(parentName)
 			}
 			unitDistrict = bknDistrictFromInstitution(institution)
 			if unitDistrict == "" {
 				unitDistrict = bknDistrictFromSchoolName(unitName)
+			}
+			if unitType == "skb" {
+				// SKB verifikasi di unitnya sendiri tanpa parent Korwil dan
+				// lokasinya selalu Kec. Purwodadi (migrasi 018).
+				parentName, parentCode = "", ""
+				unitDistrict = "PURWODADI"
 			}
 		}
 		if unitType == "" && role == store.StaffRoleVerifikatorUnit {

@@ -267,10 +267,13 @@ func TestMeGuruPPPK(t *testing.T) {
 
 func TestMeSkalaTidakAda(t *testing.T) {
 	fx := newFixture(t)
-	// Masa kerja di luar cakupan PP 5/2024 harus membuat /me tetap 200
-	// (tidak memblokir dasbor) dengan sinyal data_perlu_dilengkapi, tanpa gaji.
+	// Golongan di luar tabel skala harus membuat /me tetap 200 (tidak
+	// memblokir dasbor) dengan sinyal data_perlu_dilengkapi, tanpa gaji.
+	// (Skala III/b memuat bracket s.d. 32 th dan puncak skala menjadi gaji
+	// berikutnya untuk masa kerja melebihi tabel — cap gaji puncak 604f882 —
+	// sehingga kombinasi tak dikenal dipakai untuk memicu jalur ini.)
 	if _, err := fx.pool.Exec(context.Background(),
-		`UPDATE teachers SET tmt_awal = '1940-04-01' WHERE nip = $1`, nipPNS); err != nil {
+		`UPDATE teachers SET pangkat_gol = 'II/e' WHERE nip = $1`, nipPNS); err != nil {
 		t.Fatal(err)
 	}
 	resp, _ := login(t, fx.srv.URL, nipPNS, nipPNS)
