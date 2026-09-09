@@ -43,7 +43,7 @@ func mapStoreError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, store.ErrForbidden):
 		writeErr(w, http.StatusForbidden, "FORBIDDEN", "Data bukan dalam kewenangan Anda.")
 	case errors.Is(err, store.ErrConflict):
-		writeErr(w, http.StatusConflict, "INVALID_STATUS_TRANSITION", "Status pengajuan sudah berubah atau tidak sesuai.")
+		writeErr(w, http.StatusConflict, "INVALID_STATUS_TRANSITION", "Status pengajuan sudah berubah atau tidak sesuai. Bila Anda masih punya pengajuan aktif, tunggu prosesnya selesai sebelum mengusulkan lagi.")
 	case errors.Is(err, letterdata.ErrDraftIncomplete):
 		writeErr(w, http.StatusUnprocessableEntity, "LETTER_DRAFT_INCOMPLETE", err.Error())
 	default:
