@@ -991,6 +991,26 @@ func (s *Server) handleSubmissionFile(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUnitQueue(w http.ResponseWriter, r *http.Request) {
 	s.handleQueue(w, r, "verifikator_unit", "menunggu_unit")
 }
+
+// handleUnitMonitor: pantauan unit — seluruh pengajuan dalam scope unit
+// (semua status) agar unit tetap bisa mengawal usulannya setelah ACC:
+// menunggu_dinas, menunggu_tte, dikembalikan_*, terbit. Read-only:
+// detail memakai reviewDetail yang sama, tanpa tombol aksi (diputus di UI).
+func (s *Server) handleUnitMonitor(w http.ResponseWriter, r *http.Request) {
+	unitID := userFrom(r).UnitID
+	if unitID == nil {
+		writeErr(w, http.StatusForbidden, "FORBIDDEN", "Akun verifikator belum memiliki scope unit.")
+		return
+	}
+	status := r.URL.Query().Get("status")
+	page := pageFrom(r)
+	items, total, err := store.ListUnitMonitor(r.Context(), s.Pool, *unitID, status, page)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "INTERNAL", "Gagal mengambil pantauan unit.")
+		return
+	}
+	writeDataMeta(w, http.StatusOK, items, map[string]any{"limit": page.Limit, "offset": page.Offset, "total": total})
+}
 func (s *Server) handleDinasQueue(w http.ResponseWriter, r *http.Request) {
 	s.handleQueue(w, r, "verifikator_dinas", "menunggu_dinas")
 }

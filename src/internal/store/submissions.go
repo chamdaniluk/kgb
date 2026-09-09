@@ -191,6 +191,81 @@ func ListQueue(ctx context.Context, pool *pgxpool.Pool, role string, unitID *int
 	return result, total, rows.Err()
 }
 
+// ListUnitMonitor mengambil seluruh pengajuan dalam scope unit (semua status)
+// agar unit/Korwil/SMP/SKB tetap bisa memantau dan mengawal usulannya
+// setelah disetujui: menunggu_dinas, menunggu_tte, dikembalikan_*,
+// terbit, maupun menunggu_unit. Scope sama dengan antrean unit
+// (ListQueue): unitnya sendiri + TK/SD sekecamatan untuk Korwil.
+// Read-only di sisi handler: tidak ada aksi approve/reject di sini.
+func ListUnitMonitor(ctx context.Context, pool *pgxpool.Pool, unitID int64, status string, page Page) ([]Submission, int64, error) {
+	where := ``
+	args := []any{}
+	verificationUnit := "COALESCE(s.proposed_unit_id, s.snapshot_unit_id, t.unit_id)"
+	if status != "" && status != "semua" {
+		where += ` WHERE s.status = $1`
+		args = append(args, status)
+		where += ` AND EXISTS (
+			SELECT 1 FROM units actor
+			LEFT JOIN units cand ON cand.id = ` + verificationUnit + `
+			LEFT JOIN units candpar ON candpar.id = cand.parent_id
+			WHERE actor.id = $2 AND (
+				-- SMP/SKB: unitnya sendiri
+				(actor.type IN ('smp','skb') AND cand.id = actor.id)
+				-- Korwil: unitnya sendiri + TK/SD sekecamatan via parent/kecamatan
+				OR (actor.type = 'korwil' AND (
+					cand.id = actor.id
+					OR (cand.type IN ('sd','tk') AND (
+						cand.parent_id = actor.id
+						OR (candpar.type = 'korwil' AND candpar.district IS NOT NULL AND candpar.district = actor.district)
+						OR (cand.district IS NOT NULL AND cand.district = actor.district)
+					))
+				))
+			))`
+		args = append(args, unitID)
+	} else {
+		where += ` WHERE EXISTS (
+			SELECT 1 FROM units actor
+			LEFT JOIN units cand ON cand.id = ` + verificationUnit + `
+			LEFT JOIN units candpar ON candpar.id = cand.parent_id
+			WHERE actor.id = $1 AND (
+				-- SMP/SKB: unitnya sendiri
+				(actor.type IN ('smp','skb') AND cand.id = actor.id)
+				-- Korwil: unitnya sendiri + TK/SD sekecamatan via parent/kecamatan
+				OR (actor.type = 'korwil' AND (
+					cand.id = actor.id
+					OR (cand.type IN ('sd','tk') AND (
+						cand.parent_id = actor.id
+						OR (candpar.type = 'korwil' AND candpar.district IS NOT NULL AND candpar.district = actor.district)
+						OR (cand.district IS NOT NULL AND cand.district = actor.district)
+					))
+				))
+			))`
+		args = append(args, unitID)
+	}
+	var total int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM submissions s JOIN teachers t ON t.id=s.teacher_id`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	query := submissionSelect + where + ` ORDER BY s.submitted_at DESC NULLS LAST, s.id DESC`
+	lim, limArgs := page.clause(len(args) + 1)
+	query += lim
+	args = append(args, limArgs...)
+	rows, err := pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	result := make([]Submission, 0)
+	for rows.Next() {
+		s, err := scanSubmission(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		result = append(result, s)
+	}
+	return result, total, rows.Err()
+}
+
 // CreateSubmission menyimpan pengajuan dan audit submit dalam satu transaksi.
 // Status awal mengikuti jenjang unit guru: unit Dinas langsung menunggu_dinas
 // (tanpa antrean unit), jenjang lain menunggu_unit untuk verifikasi Korwil/SMP.
