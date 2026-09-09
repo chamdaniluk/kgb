@@ -10,8 +10,9 @@ import (
 	"sicendikia/internal/store"
 )
 
-// Admin Dinas: boleh approve usulan pegawai Dinas, ditolak untuk jenjang lain.
-func TestAdminDinasHanyaProsesUsulanDinas(t *testing.T) {
+// Admin Dinas: memverifikasi SEMUA usulan dari unit (keputusan owner 2026-09-09);
+// usulan pegawai Dinas tetap langsung menunggu_dinas tanpa tahap unit.
+func TestAdminDinasProsesSemuaUsulan(t *testing.T) {
 	fx := newFixture(t)
 	ctx := context.Background()
 	hash := func(pw string) string {
@@ -97,8 +98,11 @@ func TestAdminDinasHanyaProsesUsulanDinas(t *testing.T) {
 		}
 		return out
 	}
-	// Admin dinas ditolak untuk jenjang SD.
-	approve("adm-dinas", idOf(subSD), http.StatusForbidden)
+	// Admin dinas memverifikasi usulan SD dari unit.
+	gotSD := approve("adm-dinas", idOf(subSD), http.StatusOK)
+	if d, ok := gotSD["data"].(map[string]any); !ok || d["status"] != "menunggu_tte" {
+		t.Fatalf("approve SD = %v, ingin menunggu_tte", gotSD)
+	}
 	// Admin dinas boleh untuk usulan dinas.
 	got := approve("adm-dinas", idOf(subDinas), http.StatusOK)
 	if d, ok := got["data"].(map[string]any); !ok || d["status"] != "menunggu_tte" {

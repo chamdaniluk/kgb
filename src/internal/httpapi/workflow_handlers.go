@@ -1092,19 +1092,16 @@ func (s *Server) handleDinasReject(w http.ResponseWriter, r *http.Request) {
 	s.handleDinasDecision(w, r, "dikembalikan_dinas", "tolak_dinas", true)
 }
 
-// handleDinasDecision membatasi peran admin_dinas hanya untuk usulan pegawai
-// Dinas (unit_type dinas). Usulan jenjang TK/SD/SMP/SKB hanya bisa diproses
-// verifikator_dinas; admin_dinas tetap bisa melihatnya (read-only).
+// handleDinasDecision memproses keputusan dinas. Keputusan owner 2026-09-09:
+// admin dinas (admin.disdik1-6) memverifikasi SEMUA usulan yang masuk
+// dari unit (TK/SD/SMP/SKB) maupun usulan langsung pegawai Dinas;
+// usulan pegawai Dinas tetap langsung menunggu_dinas tanpa tahap unit.
 func (s *Server) handleDinasDecision(w http.ResponseWriter, r *http.Request, next, action string, noteRequired bool) {
 	sub, ok := s.reviewDetail(w, r, "verifikator_dinas")
 	if !ok {
 		return
 	}
 	me := userFrom(r)
-	if me.Role == "admin_dinas" && sub.UnitType != "dinas" {
-		writeErr(w, http.StatusForbidden, "FORBIDDEN", "Usulan jenjang "+sub.UnitType+" hanya dapat diproses verifikator Dinas. Akun Admin Dinas hanya memproses usulan pegawai Dinas.")
-		return
-	}
 	var req struct {
 		Note string `json:"note"`
 	}
