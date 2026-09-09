@@ -848,6 +848,81 @@ func (s *Server) saveSlotFiles(w http.ResponseWriter, r *http.Request, asnType s
 	return out, true
 }
 
+// saveSlotFileOptional menyimpan satu slot berkas bila diunggah; bila tidak
+// ada file baru, mengembalikan slot kosong (pemanggil memakai berkas lama).
+func (s *Server) saveSlotFileOptional(w http.ResponseWriter, r *http.Request, field, label string) (store.SubmissionFile, bool) {
+	f, header, err := r.FormFile(field)
+	if err != nil {
+		return store.SubmissionFile{}, true
+	}
+	defer f.Close()
+	if header.Size > filesMaxUploadSize() {
+		writeErr(w, http.StatusUnprocessableEntity, "FILE_TOO_LARGE", "Berkas "+label+" melebihi 5MB.")
+		return store.SubmissionFile{}, false
+	}
+	path, size, err := s.Files.SavePDF(r.Context(), f, header.Filename, header.Size)
+	if err != nil {
+		if errors.Is(err, files.ErrNotPDF) {
+			writeErr(w, http.StatusUnprocessableEntity, "FILE_NOT_PDF", "Berkas "+label+" harus PDF.")
+			return store.SubmissionFile{}, false
+		}
+		if errors.Is(err, files.ErrTooLarge) {
+			writeErr(w, http.StatusUnprocessableEntity, "FILE_TOO_LARGE", "Berkas "+label+" melebihi 5MB.")
+			return store.SubmissionFile{}, false
+		}
+		writeErr(w, http.StatusInternalServerError, "FILE_SAVE_FAILED", "Berkas "+label+" gagal disimpan.")
+		return store.SubmissionFile{}, false
+	}
+	return store.SubmissionFile{Name: files.OriginalName(header.Filename), Path: path, Size: size}, true
+}
+
+// saveSlotFilesResubmit menyimpan slot berkas kirim-ulang: slot yang tidak
+// diunggah ulang memakai berkas lama (wajib tetap ada), slot baru wajib
+// PDF maksimal 5MB. Gagal bila slot wajib kosong di lama maupun baru.
+func (s *Server) saveSlotFilesResubmit(w http.ResponseWriter, r *http.Request, asnType string, id int64) (store.SubmissionFiles, bool) {
+	old, err := store.GetSubmission(r.Context(), s.Pool, id)
+	if err != nil {
+		if mapStoreError(w, err) {
+			return store.SubmissionFiles{}, false
+		}
+		writeErr(w, http.StatusInternalServerError, "RESUBMIT_FAILED", "Pengajuan ulang gagal.")
+		return store.SubmissionFiles{}, false
+	}
+	keep := func(slot store.SubmissionFile, name string, size int, path string) store.SubmissionFile {
+		if slot.Path != "" {
+			return slot
+		}
+		return store.SubmissionFile{Name: name, Path: path, Size: int64(size)}
+	}
+	needKGB := asnType != "pppk"
+	needSKP := asnType == "pppk"
+	var out store.SubmissionFiles
+	var ok bool
+	if out.KP, ok = s.saveSlotFileOptional(w, r, "file_kp", "SK terakhir"); !ok {
+		s.removeSlotFiles(out)
+		return out, false
+	}
+	if out.KGB, ok = s.saveSlotFileOptional(w, r, "file_kgb", "KGB terakhir"); !ok {
+		s.removeSlotFiles(out)
+		return out, false
+	}
+	if needSKP {
+		if out.SKP, ok = s.saveSlotFileOptional(w, r, "file_skp", "SKP 2 tahun"); !ok {
+			s.removeSlotFiles(out)
+			return out, false
+		}
+	}
+	out.KP = keep(out.KP, old.FileKPName, old.FileKPSize, old.FileKPPath)
+	out.KGB = keep(out.KGB, old.FileKGBName, old.FileKGBSize, old.FileKGBPath)
+	out.SKP = keep(out.SKP, old.FileSKPName, old.FileSKPSize, old.FileSKPPath)
+	if out.KP.Path == "" || (needKGB && out.KGB.Path == "") || (needSKP && out.SKP.Path == "") {
+		s.removeSlotFiles(out)
+		writeErr(w, http.StatusUnprocessableEntity, "FILE_REQUIRED", "Berkas pendukung wajib dilengkapi (PDF, maksimal 5MB).")
+		return out, false
+	}
+	return out, true
+}
+
 func (s *Server) removeSlotFiles(f store.SubmissionFiles) {
 	if s.Files == nil {
 		return
@@ -913,7 +988,9 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "FILE_STORAGE_NOT_CONFIGURED", "Penyimpanan berkas belum dikonfigurasi.")
 		return
 	}
-	slotFiles, ok := s.saveSlotFiles(w, r, t.ASNType)
+	// Kirim-ulang: slot yang tidak diunggah ulang memakai berkas lama agar
+	// pengusul cukup memperbaiki data/berkas yang salah saja.
+	slotFiles, ok := s.saveSlotFilesResubmit(w, r, t.ASNType, id)
 	if !ok {
 		if hasMain {
 			_ = s.Files.Remove(mainPath)
