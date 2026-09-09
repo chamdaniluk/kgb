@@ -156,14 +156,15 @@ func CommitIssue(ctx context.Context, pool *pgxpool.Pool, issue IssueContext, si
 	draftVals := issue.Submission.LetterDraftValues()
 	// Nilai efektif: golongan & unit yang dipilih pada form (disimpan di proposed_*).
 	// Jika form tidak mengubah, pakai master saat issue.
-	// Golongan efektif KGB: KP bila lebih baru dari KGB terakhir (aturan KP/KGB).
+	// Golongan efektif KGB: KP bila tanggal SK-nya lebih baru dari SK KGB
+	// terakhir (aturan SK terbaru 2026-09-09).
 	pangkatGol := issue.Submission.PangkatGol
 	if issue.Submission.ProposedPangkatGol != nil && *issue.Submission.ProposedPangkatGol != "" {
 		pangkatGol = *issue.Submission.ProposedPangkatGol
 	}
 	pangkatGol = EffectiveGolongan(
-		KPLast{Golongan: draftVals.LastKPGolongan, TMT: draftVals.LastKPTMT},
-		draftVals.LastSKTMT, pangkatGol)
+		KPLast{Golongan: draftVals.LastKPGolongan, TMT: draftVals.LastKPTMT, Tanggal: draftVals.LastKPTanggal},
+		draftVals.LastSKTanggal, pangkatGol)
 	unitID := issue.Submission.UnitID
 	if issue.Submission.ProposedUnitID != nil && *issue.Submission.ProposedUnitID != 0 {
 		unitID = *issue.Submission.ProposedUnitID

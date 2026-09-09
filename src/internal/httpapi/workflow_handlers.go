@@ -166,10 +166,17 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	draft.LastSKNomor = kgb.Nomor
 	draft.LastSKTanggal = kgb.Tanggal
 	draft.LastSKPejabat = kgb.Pejabat
-	// Naskah SK mengikuti SK terbaru: pangkat/golongan dari KP (PNS) atau SK
-	// Pertama/Perpanjangan (PPPK) bila SK itu lebih baru dari KGB; selain itu
-	// dari KGB terakhir. Tidak ada input ganda.
-	if kp.HasData() {
+	// Naskah SK mengikuti SK terbaru (keputusan owner 2026-09-09): bandingkan
+	// TANGGAL SK — KP (PNS) / SK Pertama-Perpanjangan Kontrak (PPPK) vs KGB.
+	// Pemenang mengisi SELURUH kolom identitas SK terakhir naskah (pejabat,
+	// tanggal, nomor, TMT). Masa kerja golongan lama tetap dari SK KGB
+	// (keputusan owner); pangkat mengikuti golongan pemenang.
+	kpMenang := kp.HasData() && store.SKNewer(kp.Tanggal, kgb.Tanggal)
+	if kpMenang {
+		draft.LastSKTMT = kp.TMT
+		draft.LastSKNomor = kp.Nomor
+		draft.LastSKTanggal = kp.Tanggal
+		draft.LastSKPejabat = kp.Pejabat
 		if t.ASNType == "pns" {
 			draft.Pangkat = pangkatForGolongan(kp.Golongan)
 		}
@@ -579,17 +586,19 @@ func (s *Server) handleSalaryPreview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, "INVALID_GOLONGAN", "Golongan tidak valid.")
 		return
 	}
-	// KP terakhir (opsional): bila lebih baru dari KGB terakhir, gaji
-	// mengacu golongan KP; jangka waktu tetap 2 tahun dari KGB terakhir.
+	// KP terakhir (opsional): bila tanggal SK-nya lebih baru dari SK KGB
+	// terakhir, gaji mengacu golongan KP; jangka waktu tetap 2 tahun
+	// dari KGB terakhir.
 	kpGol := strings.TrimSpace(q.Get("last_kp_golongan"))
 	kpTMT, err := parseOptionalFormDate(q.Get("last_kp_tmt"))
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, "INVALID_KP", "TMT KP terakhir tidak valid.")
 		return
 	}
-	var kgbTMT *time.Time
-	if v, errP := parseOptionalFormDate(q.Get("last_sk_tmt")); errP == nil && v != nil {
-		kgbTMT = v
+	kgbTanggal, err := parseOptionalFormDate(q.Get("last_sk_tanggal"))
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "INVALID_KGB", "Tanggal SK KGB tidak valid.")
+		return
 	}
 	if kpGol != "" || kpTMT != nil {
 		if kpGol == "" || kpTMT == nil {
@@ -604,7 +613,12 @@ func (s *Server) handleSalaryPreview(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusUnprocessableEntity, "INVALID_KP", "Golongan KP tidak valid.")
 			return
 		}
-		gol = store.EffectiveGolongan(store.KPLast{Golongan: kpGol, TMT: kpTMT}, kgbTMT, gol)
+		kpTanggal, err := parseOptionalFormDate(q.Get("last_kp_tanggal"))
+		if err != nil {
+			writeErr(w, http.StatusUnprocessableEntity, "INVALID_KP", "Tanggal SK KP tidak valid.")
+			return
+		}
+		gol = store.EffectiveGolongan(store.KPLast{Golongan: kpGol, TMT: kpTMT, Tanggal: kpTanggal}, kgbTanggal, gol)
 	}
 	// Aturan sama dengan submit: MKG KGB sebelumnya + 2 bila ada
 	// (peninjauan masa kerja yang tercatat di SK), fallback hitung TMT.

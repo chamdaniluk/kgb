@@ -169,13 +169,27 @@ func (k KPLast) HasData() bool {
 	return k.Golongan != "" && k.TMT != nil
 }
 
-// EffectiveGolongan menentukan golongan acuan gaji: golongan KP bila ada KP
-// yang lebih baru dari KGB terakhir, selain itu golongan KGB/guru.
-func EffectiveGolongan(kp KPLast, kgbTMT *time.Time, golKGB string) string {
-	if kp.HasData() && (kgbTMT == nil || !kp.TMT.Before(*kgbTMT)) {
+// EffectiveGolongan menentukan golongan acuan gaji: golongan KP bila SK KP
+// diterbitkan lebih baru (tanggal SK) dari SK KGB terakhir, selain itu
+// golongan KGB/guru. Keputusan owner 2026-09-09: acuan "SK terbaru" adalah
+// tanggal SK, bukan TMT berlaku.
+func EffectiveGolongan(kp KPLast, kgbTanggalSK *time.Time, golKGB string) string {
+	if kp.HasData() && SKNewer(kp.Tanggal, kgbTanggalSK) {
 		return kp.Golongan
 	}
 	return golKGB
+}
+
+// SKNewer melaporkan apakah tanggal SK a lebih baru dari b (nil = tidak ada).
+// Tanpa tanggal di kedua sisi, a dianggap tidak lebih baru.
+func SKNewer(a, b *time.Time) bool {
+	if a == nil {
+		return false
+	}
+	if b == nil {
+		return true
+	}
+	return !a.Before(*b)
 }
 
 // KGBLast adalah SK KGB terakhir: golongan ruang saat KGB terakhir dapat
