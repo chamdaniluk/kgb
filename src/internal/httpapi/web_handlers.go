@@ -588,6 +588,9 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none;bor
 .btn:focus-visible,a:focus-visible,.pill:focus-visible,.tab:focus-visible,.sb-item:focus-visible{outline:none;box-shadow:var(--ring)}
 textarea{min-height:100px;resize:vertical}
 input[aria-invalid="true"],select[aria-invalid="true"],textarea[aria-invalid="true"]{border-color:var(--danger)}
+input[aria-invalid="true"],select[aria-invalid="true"],textarea[aria-invalid="true"]{border:2px solid var(--danger);background:var(--danger-soft);outline:none}
+label.req-missing{color:var(--danger-2)}
+.req-note{display:block;margin-top:4px;font-size:12px;font-weight:700;color:var(--danger-2)}
 input[aria-invalid="true"]:focus-visible,textarea[aria-invalid="true"]:focus-visible{box-shadow:0 0 0 3px rgba(220,38,38,.22)}
 .error{color:var(--danger-2);min-height:22px;font-size:13px;display:flex;align-items:center;gap:6px;margin-top:8px}
 .error:empty{display:none}
