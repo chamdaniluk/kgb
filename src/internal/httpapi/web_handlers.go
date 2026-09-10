@@ -16,7 +16,7 @@ var logoGroboganPNG []byte
 //go:embed assets/fonts/plus-jakarta-sans-var.woff2
 var fontPJSVar []byte
 
-const assetVersion = "20260909f"
+const assetVersion = "20260909g"
 
 type pageData struct {
 	Title   string
