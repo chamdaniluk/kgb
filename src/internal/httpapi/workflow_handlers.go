@@ -234,35 +234,40 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	if tmtAwal.After(tmt) {
 		return preparedKGB{}, errors.New("TMT awal tidak boleh setelah TMT KGB berlaku")
 	}
-	// Masa kerja KGB baru: MKG SK pemenang (KP/KGB terbaru berdasar tanggal
-	// SK, keputusan owner 2026-09-09) + 2 bila tersimpan dari SK (mencakup
-	// peninjauan masa kerja yang sudah tercatat di SK sebelumnya); selain
-	// itu dihitung dari TMT awal → TMT berlaku.
+	// Masa kerja naskah = MENTAH dari SK pemenang (keputusan owner 2026-09-10):
+	// bila SK KP menang, "Masa kerja golongan pada tgl. tsb" mencetak masa
+	// SK KP apa adanya (mis. 5 th 7 bl). KGB = +2 tahun dgn bulan sama.
+	// Grid gaji berkala (genap, utk lookup skala) dihitung terpisah.
 	mkgSK := draft.LastSKMasaTahun
+	mkgBulanSK := draft.LastSKMasaBulan
 	if kpMenang {
 		mkgSK = draft.LastKPMasaTahun
+		mkgBulanSK = draft.LastKPMasaBulan
 	}
 	if mkgSK == nil {
 		mkgSK = t.LastSKMasaKerjaTahun
 	}
-	masaBaru := letterdata.MasaKerjaKGB(mkgSK, *tmtAwal, tmt)
-	masaLama := masaBaru - 2
-	if masaLama < 0 {
-		masaLama = 0
+	masaTahunCetak := 0
+	if mkgSK != nil && *mkgSK >= 0 {
+		masaTahunCetak = *mkgSK
 	}
-	lama, baru := masaLama, masaBaru
-	// Naskah berkala memakai tahun genap 0 bulan: masa SK pemenang
-	// dinormalisasi ke grid berkala agar konsisten dengan baris gaji
-	// (mis. KP 5 th 7 bl → 4 th 0 bl); masa asli SK tetap tersimpan di
-	// kolom last_kp_*. MKG baru = MKG lama + 2 (satu periode berkala).
-	lama = letterdata.EvenYear(lama)
-	baru = lama + 2
-	masaLama, masaBaru = lama, baru
-	bulanSK := 0
+	bulanCetak := 0
+	if mkgBulanSK != nil && *mkgBulanSK >= 0 && *mkgBulanSK <= 11 {
+		bulanCetak = *mkgBulanSK
+	} else if t.LastSKMasaKerjaBulan != nil {
+		bulanCetak = *t.LastSKMasaKerjaBulan
+	}
+	lama, baru := masaTahunCetak, masaTahunCetak+2
+	bulanSK := bulanCetak
 	draft.MKGLamaTahun = &lama
 	draft.MKGLamaBulan = &bulanSK
 	draft.MKGBaruTahun = &baru
 	draft.MKGBaruBulan = &bulanSK
+	// Grid gaji berkala: normalisasi ke tahun genap (mis. 5→4) utk lookup
+	// skala; masaBaru grid = +2 dari grid lama. Tidak mengubah angka cetak.
+	gridLama := letterdata.EvenYear(lama)
+	gridBaru := gridLama + 2
+	masaLama, masaBaru := gridLama, gridBaru
 	// Golongan efektif: KP bila tanggal SK-nya lebih baru dari SK KGB
 	// terakhir (jangka waktu KGB tetap 2 tahun dari KGB terakhir),
 	// selain itu golongan KGB/guru.

@@ -137,11 +137,11 @@ func ValidateDraft(d Draft) error {
 	if d.ProposedTMT.IsZero() {
 		return fmt.Errorf("%w: TMT usulan wajib diisi", ErrDraftIncomplete)
 	}
-	if d.MKGLamaBulan != 0 || d.MKGBaruBulan != 0 {
-		return fmt.Errorf("%w: masa kerja berkala harus 0 bulan", ErrDraftIncomplete)
-	}
-	if d.MKGLamaTahun != EvenYear(d.MKGLamaTahun) || d.MKGBaruTahun != d.MKGLamaTahun+2 {
-		return fmt.Errorf("%w: masa kerja berkala harus genap dan naik 2 tahun", ErrDraftIncomplete)
+	// Masa kerja naskah mengikuti SK pemenang apa adanya (bisa ganjil /
+	// berbulan, mis. SK KP 5 th 7 bl); KGB +2 tahun dgn bulan sama.
+	// Grid gaji berkala (genap) dihitung terpisah di prepareKGBFromForm.
+	if d.MKGBaruTahun != d.MKGLamaTahun+2 || d.MKGBaruBulan != d.MKGLamaBulan {
+		return fmt.Errorf("%w: masa kerja baru harus +2 tahun dgn bulan sama", ErrDraftIncomplete)
 	}
 	// KGB berkala dihitung dari TMT awal (CPNS/pengangkatan), bukan SK terakhir
 	// (SK terakhir bisa naik pangkat). Invarian di-cek di prepareKGBFromForm.
