@@ -167,7 +167,9 @@ func TestSubmitKPBedaSIPPASNDitolak(t *testing.T) {
 }
 
 // Peninjauan masa kerja: CPNS Des 2020 + MKG SK KGB 8 (wiyata bakti 4 th)
-// → KGB Des 2026 MKG 10 dengan golongan KP III/b.
+// → KGB Des 2026 MKG 10 dengan golongan KP III/b. SK KP (2026-06-20)
+// lebih baru dari SK KGB (default helper 2024-11-07) sehingga KP menang;
+// masa KP default helper (4 th) tidak dipakai karena masa SK KGB 8.
 func TestSubmitPeninjauanMasaKerja(t *testing.T) {
 	fx := newFixture(t)
 	ctx := context.Background()
@@ -176,14 +178,16 @@ func TestSubmitPeninjauanMasaKerja(t *testing.T) {
 	}
 	client, csrf := loginClient(t, fx.srv.URL, nipPNS, nipPNS)
 	resp, data := submitPDFWith(t, client, fx.srv.URL, csrf, map[string]string{
-		"last_kgb_golongan":  "III/a",
+		"last_kgb_golongan":   "III/a",
 		"last_kgb_masa_tahun": "8",
 		"last_kgb_masa_bulan": "0",
-		"last_kp_golongan":   "III/b",
-		"last_kp_tmt":        "2026-07-01",
-		"last_kp_nomor":      "800.1.3.2/795/2026",
-		"last_kp_tanggal":    "2026-06-20",
-		"last_kp_pejabat":    "BUPATI GROBOGAN",
+		"last_kp_golongan":    "III/b",
+		"last_kp_tmt":         "2026-07-01",
+		"last_kp_masa_tahun":  "8",
+		"last_kp_masa_bulan":  "0",
+		"last_kp_nomor":       "800.1.3.2/795/2026",
+		"last_kp_tanggal":     "2026-06-20",
+		"last_kp_pejabat":     "BUPATI GROBOGAN",
 	})
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("submit peninjauan status=%d body=%v", resp.StatusCode, data)

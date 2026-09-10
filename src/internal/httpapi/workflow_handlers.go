@@ -234,10 +234,14 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	if tmtAwal.After(tmt) {
 		return preparedKGB{}, errors.New("TMT awal tidak boleh setelah TMT KGB berlaku")
 	}
-	// Masa kerja KGB baru: MKG KGB sebelumnya + 2 bila tersimpan dari SK
-	// (mencakup peninjauan masa kerja yang sudah tercatat di SK sebelumnya);
-	// selain itu dihitung dari TMT awal → TMT berlaku.
+	// Masa kerja KGB baru: MKG SK pemenang (KP/KGB terbaru berdasar tanggal
+	// SK, keputusan owner 2026-09-09) + 2 bila tersimpan dari SK (mencakup
+	// peninjauan masa kerja yang sudah tercatat di SK sebelumnya); selain
+	// itu dihitung dari TMT awal → TMT berlaku.
 	mkgSK := draft.LastSKMasaTahun
+	if kpMenang {
+		mkgSK = draft.LastKPMasaTahun
+	}
 	if mkgSK == nil {
 		mkgSK = t.LastSKMasaKerjaTahun
 	}
@@ -247,22 +251,25 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 		masaLama = 0
 	}
 	lama, baru := masaLama, masaBaru
+	// Naskah berkala memakai tahun genap 0 bulan: masa SK pemenang
+	// dinormalisasi ke grid berkala agar konsisten dengan baris gaji
+	// (mis. KP 5 th 7 bl → 4 th 0 bl); masa asli SK tetap tersimpan di
+	// kolom last_kp_*. MKG baru = MKG lama + 2 (satu periode berkala).
+	lama = letterdata.EvenYear(lama)
+	baru = lama + 2
+	masaLama, masaBaru = lama, baru
 	bulanSK := 0
-	if draft.LastSKMasaBulan != nil {
-		bulanSK = *draft.LastSKMasaBulan
-	} else if t.LastSKMasaKerjaBulan != nil {
-		bulanSK = *t.LastSKMasaKerjaBulan
-	}
 	draft.MKGLamaTahun = &lama
 	draft.MKGLamaBulan = &bulanSK
 	draft.MKGBaruTahun = &baru
 	draft.MKGBaruBulan = &bulanSK
-	// Golongan efektif: KP bila lebih baru dari KGB terakhir (jangka waktu
-	// KGB tetap 2 tahun dari KGB terakhir), selain itu golongan KGB/guru.
+	// Golongan efektif: KP bila tanggal SK-nya lebih baru dari SK KGB
+	// terakhir (jangka waktu KGB tetap 2 tahun dari KGB terakhir),
+	// selain itu golongan KGB/guru.
 	// Sebutan pangkat PNS mengikuti golongan efektif; PPPK tidak punya
 	// sebutan pangkat PNS — naskahnya memakai golongan I-XVII (template PPPK
 	// mencetak "pangkat_jabatan" langsung dari golongan).
-	gol := store.EffectiveGolongan(kp, draft.LastSKTMT, t.PangkatGol)
+	gol := store.EffectiveGolongan(kp, draft.LastSKTanggal, t.PangkatGol)
 	if t.ASNType == "pns" {
 		draft.Pangkat = pangkatForGolongan(gol)
 	} else if draft.Pangkat == "" {
@@ -600,6 +607,11 @@ func (s *Server) handleSalaryPreview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, "INVALID_KGB", "Tanggal SK KGB tidak valid.")
 		return
 	}
+	kpTanggal, err := parseOptionalFormDate(q.Get("last_kp_tanggal"))
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "INVALID_KP", "Tanggal SK KP tidak valid.")
+		return
+	}
 	if kpGol != "" || kpTMT != nil {
 		if kpGol == "" || kpTMT == nil {
 			writeErr(w, http.StatusUnprocessableEntity, "INVALID_KP", "Golongan dan TMT KP wajib diisi bila ada KP terbaru.")
@@ -613,20 +625,28 @@ func (s *Server) handleSalaryPreview(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusUnprocessableEntity, "INVALID_KP", "Golongan KP tidak valid.")
 			return
 		}
-		kpTanggal, err := parseOptionalFormDate(q.Get("last_kp_tanggal"))
-		if err != nil {
+		kpTanggal, err2 := parseOptionalFormDate(q.Get("last_kp_tanggal"))
+		if err2 != nil {
 			writeErr(w, http.StatusUnprocessableEntity, "INVALID_KP", "Tanggal SK KP tidak valid.")
 			return
 		}
 		gol = store.EffectiveGolongan(store.KPLast{Golongan: kpGol, TMT: kpTMT, Tanggal: kpTanggal}, kgbTanggal, gol)
 	}
-	// Aturan sama dengan submit: MKG KGB sebelumnya + 2 bila ada
-	// (peninjauan masa kerja yang tercatat di SK), fallback hitung TMT.
-	// Parameter opsional last_kgb_masa_tahun dari seksi KGB form.
+	// Aturan sama dengan submit: MKG SK pemenang (KP bila tanggal SK-nya
+	// lebih baru dari SK KGB) + 2 bila ada, fallback hitung TMT.
+	// Parameter opsional last_kgb_masa_tahun / last_kp_masa_tahun dari form.
 	var mkgSK *int
 	if raw := strings.TrimSpace(q.Get("last_kgb_masa_tahun")); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
 			mkgSK = &n
+		}
+	}
+	if store.SKNewer(kpTanggal, kgbTanggal) {
+		mkgSK = nil
+		if raw := strings.TrimSpace(q.Get("last_kp_masa_tahun")); raw != "" {
+			if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+				mkgSK = &n
+			}
 		}
 	}
 	if mkgSK == nil {
@@ -637,6 +657,8 @@ func (s *Server) handleSalaryPreview(w http.ResponseWriter, r *http.Request) {
 	if masaLama < 0 {
 		masaLama = 0
 	}
+	masaLama = letterdata.EvenYear(masaLama)
+	masaBaru = masaLama + 2
 	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, masaLama)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND", "Kombinasi golongan/masa kerja tidak ada di skala gaji.")
