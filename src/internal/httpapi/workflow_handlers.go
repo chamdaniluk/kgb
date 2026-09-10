@@ -462,36 +462,36 @@ func letterDraftFromForm(r *http.Request, teacher store.Teacher, masaKerja int) 
 
 func validateDraftFor(teacher store.Teacher, draft store.LetterDraft, proposedTMT time.Time, current, next string) error {
 	input := letterdata.Draft{
-		ASNType:        teacher.ASNType,
-		BirthPlace:     draft.BirthPlace,
-		Karpeg:         draft.Karpeg,
-		Pangkat:        draft.Pangkat,
-		PangkatGol:     teacher.PangkatGol,
-		Jabatan:        draft.Jabatan,
-		BirthDate:      draft.BirthDate,
-		LastSKPejabat:  draft.LastSKPejabat,
-		LastSKNomor:    draft.LastSKNomor,
-		LastSKTanggal:  draft.LastSKTanggal,
-		LastSKTMT:      draft.LastSKTMT,
+		ASNType:         teacher.ASNType,
+		BirthPlace:      draft.BirthPlace,
+		Karpeg:          draft.Karpeg,
+		Pangkat:         draft.Pangkat,
+		PangkatGol:      teacher.PangkatGol,
+		Jabatan:         draft.Jabatan,
+		BirthDate:       draft.BirthDate,
+		LastSKPejabat:   draft.LastSKPejabat,
+		LastSKNomor:     draft.LastSKNomor,
+		LastSKTanggal:   draft.LastSKTanggal,
+		LastSKTMT:       draft.LastSKTMT,
 		LastSKMasaTahun: draft.LastSKMasaTahun,
 		LastSKMasaBulan: draft.LastSKMasaBulan,
-		LastKPGolongan: draft.LastKPGolongan,
-		LastKPTMT:      draft.LastKPTMT,
+		LastKPGolongan:  draft.LastKPGolongan,
+		LastKPTMT:       draft.LastKPTMT,
 		LastKPMasaTahun: draft.LastKPMasaTahun,
 		LastKPMasaBulan: draft.LastKPMasaBulan,
-		LastKPNomor:    draft.LastKPNomor,
-		LastKPTanggal:  draft.LastKPTanggal,
-		LastKPPejabat:  draft.LastKPPejabat,
-		MKGLamaTahun:   derefIntPtr(draft.MKGLamaTahun),
-		MKGLamaBulan:   derefIntPtr(draft.MKGLamaBulan),
-		MKGBaruTahun:   derefIntPtr(draft.MKGBaruTahun),
-		MKGBaruBulan:   derefIntPtr(draft.MKGBaruBulan),
-		ProposedTMT:    proposedTMT,
-		CurrentSalary:  current,
-		NextSalary:     next,
-		UnitName:       teacher.UnitName,
-		MasaPerjanjian: draft.MasaPerjanjian,
-		Perpanjangan:   draft.Perpanjangan,
+		LastKPNomor:     draft.LastKPNomor,
+		LastKPTanggal:   draft.LastKPTanggal,
+		LastKPPejabat:   draft.LastKPPejabat,
+		MKGLamaTahun:    derefIntPtr(draft.MKGLamaTahun),
+		MKGLamaBulan:    derefIntPtr(draft.MKGLamaBulan),
+		MKGBaruTahun:    derefIntPtr(draft.MKGBaruTahun),
+		MKGBaruBulan:    derefIntPtr(draft.MKGBaruBulan),
+		ProposedTMT:     proposedTMT,
+		CurrentSalary:   current,
+		NextSalary:      next,
+		UnitName:        teacher.UnitName,
+		MasaPerjanjian:  draft.MasaPerjanjian,
+		Perpanjangan:    draft.Perpanjangan,
 	}
 	if teacher.ASNType == "pppk" && letterdata.Normalize(draft.MasaPerjanjian) != "" && draft.Perpanjangan == nil {
 		input.PerpanjanganDash = true
@@ -1262,6 +1262,100 @@ func (s *Server) handleDinasApprove(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) handleDinasReject(w http.ResponseWriter, r *http.Request) {
 	s.handleDinasDecision(w, r, "dikembalikan_dinas", "tolak_dinas", true)
+}
+
+// koreksiNoteMin adalah panjang minimum catatan bila koreksi mengubah nilai
+// yang menentukan gaji (TMT berlaku, gaji lama/baru). Keputusan owner
+// 2026-09-11: kolom penentu gaji wajib beralasan, bukan sekadar dicentang.
+const koreksiNoteMin = 10
+
+// handleDinasKoreksi memperbaiki data usulan pada tahap menunggu_dinas sebelum
+// diteruskan ke pimpinan untuk TTE (keputusan owner 2026-09-11).
+//
+// Form menerima field yang SAMA dengan form usulan sehingga memakai ulang
+// prepareKGBFromForm: gaji, masa kerja naskah, dan TMT tetap dihitung oleh satu
+// mesin yang sama. Berkas tidak diganti di sini — berkas keliru tetap lewat
+// mekanisme tolak-kembali. Kolom yang mengubah gaji/TMT wajib disertai catatan.
+func (s *Server) handleDinasKoreksi(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxMultipartMemory+1<<20)
+	id, err := parsePathID(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "INVALID_ID", "ID pengajuan tidak valid.")
+		return
+	}
+	if err := r.ParseMultipartForm(maxMultipartMemory); err != nil {
+		writeErr(w, http.StatusBadRequest, "INVALID_FORM", "Form koreksi tidak valid.")
+		return
+	}
+	sub, err := store.GetSubmission(r.Context(), s.Pool, id)
+	if err != nil {
+		if !mapStoreError(w, err) {
+			writeErr(w, http.StatusInternalServerError, "INTERNAL", "Gagal mengambil pengajuan.")
+		}
+		return
+	}
+	if sub.Status != "menunggu_dinas" {
+		writeErr(w, http.StatusConflict, "INVALID_STATUS_TRANSITION", "Koreksi hanya tersedia sebelum usulan diteruskan ke pimpinan (status menunggu Dinas).")
+		return
+	}
+	t, err := store.GetTeacherByID(r.Context(), s.Pool, sub.TeacherID)
+	if err != nil {
+		if !mapStoreError(w, err) {
+			writeErr(w, http.StatusInternalServerError, "INTERNAL", "Gagal mengambil data kepegawaian.")
+		}
+		return
+	}
+	prep, err := s.prepareKGBFromForm(r, t, time.Now())
+	if err != nil {
+		if errors.Is(err, letterdata.ErrDraftIncomplete) {
+			writeErr(w, http.StatusUnprocessableEntity, "LETTER_DRAFT_INCOMPLETE", err.Error())
+			return
+		}
+		if errors.Is(err, store.ErrScaleNotFound) {
+			writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND", "Kombinasi golongan/masa kerja tidak ada di skala gaji.")
+			return
+		}
+		writeErr(w, http.StatusUnprocessableEntity, "KGB_DATA_REQUIRED", err.Error())
+		return
+	}
+	// Catatan wajib bila nilai penentu gaji berubah: gaji lama/baru atau TMT
+	// berlaku. Perubahan identitas naskah saja tidak mewajibkan catatan.
+	note := strings.TrimSpace(r.FormValue("koreksi_note"))
+	gajiBerubah := prep.Current != sub.CurrentSalary ||
+		prep.Next != sub.NextSalary ||
+		!prep.ProposedTMT.Equal(sub.ProposedTMT)
+	if gajiBerubah && len([]rune(note)) < koreksiNoteMin {
+		writeErr(w, http.StatusBadRequest, "NOTE_REQUIRED",
+			"Koreksi yang mengubah gaji atau TMT wajib disertai catatan alasan (minimal 10 karakter).")
+		return
+	}
+	// Berkas dipertahankan apa adanya: koreksi ini khusus data naskah.
+	files := store.SubmissionFiles{
+		Main: store.SubmissionFile{Name: sub.FileName, Path: sub.FilePath, Size: int64(sub.FileSize)},
+		KP:   store.SubmissionFile{Name: sub.FileKPName, Path: sub.FileKPPath, Size: int64(sub.FileKPSize)},
+		KGB:  store.SubmissionFile{Name: sub.FileKGBName, Path: sub.FileKGBPath, Size: int64(sub.FileKGBSize)},
+		SKP:  store.SubmissionFile{Name: sub.FileSKPName, Path: sub.FileSKPPath, Size: int64(sub.FileSKPSize)},
+	}
+	formGol := strings.TrimSpace(r.FormValue("pangkat_gol"))
+	var cg store.TeacherChange
+	if formGol != "" {
+		cg.PangkatGol = &formGol
+	}
+	if uidRaw := strings.TrimSpace(r.FormValue("unit_id")); uidRaw != "" {
+		if uid, err2 := strconv.ParseInt(uidRaw, 10, 64); err2 == nil && uid > 0 {
+			cg.UnitID = &uid
+		}
+	}
+	updated, err := store.KoreksiDinas(r.Context(), s.Pool, id, userFrom(r).ID, prep.ProposedTMT, &prep.MasaBaru,
+		prep.LastTMT, prep.TMTAwal, cg, prep.Draft, prep.Current, prep.Next, files, note, clientIP(r))
+	if err != nil {
+		if mapStoreError(w, err) {
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "KOREKSI_FAILED", "Koreksi data gagal disimpan.")
+		return
+	}
+	writeData(w, http.StatusOK, updated)
 }
 
 // handleTTEReject: pimpinan menolak di tahap TTE — usulan kembali ke

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -349,6 +350,77 @@ func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorI
 }
 
 // Resubmit mengubah pengajuan dikembalikan sesuai jenjang penolakan.
+// draftUpdate adalah nilai naskah yang ditulis ulang ke baris pengajuan.
+// Dipakai bersama oleh kirim ulang pengusul (Resubmit) dan koreksi petugas
+// Dinas (KoreksiDinas) supaya daftar kolom hanya hidup di satu tempat.
+type draftUpdate struct {
+	Status             string
+	ProposedTMT        time.Time
+	ProposedMasaKerja  *int
+	ProposedTMTKGBLast *time.Time
+	Change             TeacherChange
+	Draft              LetterDraft
+	CurrentSalary      string
+	NextSalary         string
+	Files              SubmissionFiles
+	TMTAwal            *time.Time
+	// BumpSubmittedAt di-set saat pengusul mengirim ulang (kembali ke antrean);
+	// koreksi petugas tidak menggeser posisi antrean.
+	BumpSubmittedAt bool
+	// ClearRejectionNote di-set saat pengiriman ulang membatalkan penolakan.
+	ClearRejectionNote bool
+}
+
+// applyDraftUpdate menulis nilai naskah dan menyegarkan snapshot data BKN.
+func applyDraftUpdate(ctx context.Context, tx pgx.Tx, id int64, u draftUpdate) error {
+	if _, err := tx.Exec(ctx, `UPDATE submissions SET status=$1, proposed_tmt=$2, proposed_masa_kerja_tahun=$3, proposed_tmt_kgb_last=$4,
+		proposed_pangkat_gol=$5, proposed_pangkat=$6, proposed_jabatan=$7, proposed_unit_id=$8, proposed_effective_date=$9, proposed_change_note=$10,
+		current_salary=$11, next_salary=$12, file_name=$13, file_path=$14, file_size=$15,
+		file_kp_name=$16, file_kp_path=$17, file_kp_size=$18,
+		file_kgb_name=$19, file_kgb_path=$20, file_kgb_size=$21,
+		file_skp_name=$22, file_skp_path=$23, file_skp_size=$24,
+		draft_birth_place=$25, draft_birth_date=$26, draft_karpeg=$27, draft_pangkat=$28, draft_jabatan=$29,
+		draft_last_sk_pejabat=$30, draft_last_sk_tanggal=$31, draft_last_sk_nomor=$32, draft_last_sk_tmt=$33,
+		draft_last_sk_masa_tahun=$34, draft_last_sk_masa_bulan=$35,
+		draft_last_kp_golongan=$36, draft_last_kp_tmt=$37, draft_last_kp_nomor=$38, draft_last_kp_tanggal=$39, draft_last_kp_pejabat=$40,
+		draft_last_kp_masa_tahun=$41, draft_last_kp_masa_bulan=$42,
+		draft_mkg_lama_tahun=$43, draft_mkg_lama_bulan=$44, draft_mkg_baru_tahun=$45, draft_mkg_baru_bulan=$46,
+		draft_masa_perjanjian=$47, draft_perpanjangan_kontrak=$48, tmt_awal=$49,
+		submitted_at=CASE WHEN $51 THEN now() ELSE submitted_at END,
+		rejection_note=CASE WHEN $52 THEN NULL ELSE rejection_note END,
+		updated_at=now() WHERE id=$50`,
+		u.Status, u.ProposedTMT, u.ProposedMasaKerja, u.ProposedTMTKGBLast, u.Change.PangkatGol, u.Change.Pangkat, u.Change.Jabatan, u.Change.UnitID, u.Change.EffectiveDate,
+		nullIfEmpty(u.Change.Note), u.CurrentSalary, u.NextSalary,
+		u.Files.Main.Name, nullIfEmpty(u.Files.Main.Path), u.Files.Main.Size,
+		nullIfEmpty(u.Files.KP.Name), nullIfEmpty(u.Files.KP.Path), u.Files.KP.Size,
+		nullIfEmpty(u.Files.KGB.Name), nullIfEmpty(u.Files.KGB.Path), u.Files.KGB.Size,
+		nullIfEmpty(u.Files.SKP.Name), nullIfEmpty(u.Files.SKP.Path), u.Files.SKP.Size,
+		nullIfEmpty(u.Draft.BirthPlace), u.Draft.BirthDate, nullIfEmpty(u.Draft.Karpeg), nullIfEmpty(u.Draft.Pangkat), nullIfEmpty(u.Draft.Jabatan),
+		nullIfEmpty(u.Draft.LastSKPejabat), u.Draft.LastSKTanggal, nullIfEmpty(u.Draft.LastSKNomor), u.Draft.LastSKTMT,
+		u.Draft.LastSKMasaTahun, u.Draft.LastSKMasaBulan,
+		nullIfEmpty(u.Draft.LastKPGolongan), u.Draft.LastKPTMT, nullIfEmpty(u.Draft.LastKPNomor), u.Draft.LastKPTanggal, nullIfEmpty(u.Draft.LastKPPejabat),
+		u.Draft.LastKPMasaTahun, u.Draft.LastKPMasaBulan,
+		u.Draft.MKGLamaTahun, u.Draft.MKGLamaBulan, u.Draft.MKGBaruTahun, u.Draft.MKGBaruBulan,
+		nullIfEmpty(u.Draft.MasaPerjanjian), u.Draft.Perpanjangan, u.TMTAwal, id, u.BumpSubmittedAt, u.ClearRejectionNote); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE submissions s SET
+			snapshot_name=t.name, snapshot_nip=t.nip, snapshot_birth_date=t.birth_date,
+			snapshot_asn_type=t.asn_type, snapshot_pangkat_gol=t.pangkat_gol,
+			snapshot_pangkat=t.pangkat, snapshot_jabatan=t.jabatan,
+			snapshot_masa_kerja_tahun=t.masa_kerja_tahun, snapshot_birth_place=t.birth_place, snapshot_karpeg=t.karpeg,
+			snapshot_last_sk_pejabat=t.last_sk_pejabat, snapshot_last_sk_tanggal=t.last_sk_tanggal, snapshot_last_sk_nomor=t.last_sk_nomor,
+			snapshot_last_sk_tmt_berlaku=t.last_sk_tmt_berlaku, snapshot_last_sk_masa_kerja_tahun=t.last_sk_masa_kerja_tahun, snapshot_last_sk_masa_kerja_bulan=t.last_sk_masa_kerja_bulan,
+			snapshot_unit_id=t.unit_id, snapshot_unit_name=u.name
+		FROM teachers t JOIN units u ON u.id=t.unit_id
+		WHERE s.id=$1 AND t.id=s.teacher_id`, id); err != nil {
+		return fmt.Errorf("snapshot data BKN: %w", err)
+	}
+	return nil
+}
+
+// Resubmit mengubah pengajuan dikembalikan sesuai jenjang penolakan.
 func Resubmit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, proposedTMT time.Time, proposedMasaKerja *int, proposedTMTKGBLast, tmtAwal *time.Time, change TeacherChange, draft LetterDraft, currentSalary, nextSalary string, files SubmissionFiles, ip string) (Submission, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -371,47 +443,21 @@ func Resubmit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, propos
 	default:
 		return Submission{}, ErrConflict
 	}
-	if _, err := tx.Exec(ctx, `UPDATE submissions SET status=$1, proposed_tmt=$2, proposed_masa_kerja_tahun=$3, proposed_tmt_kgb_last=$4,
-		proposed_pangkat_gol=$5, proposed_pangkat=$6, proposed_jabatan=$7, proposed_unit_id=$8, proposed_effective_date=$9, proposed_change_note=$10,
-		current_salary=$11, next_salary=$12, file_name=$13, file_path=$14, file_size=$15,
-		file_kp_name=$16, file_kp_path=$17, file_kp_size=$18,
-		file_kgb_name=$19, file_kgb_path=$20, file_kgb_size=$21,
-		file_skp_name=$22, file_skp_path=$23, file_skp_size=$24,
-		rejection_note=NULL, submitted_at=now(), updated_at=now(),
-		draft_birth_place=$25, draft_birth_date=$26, draft_karpeg=$27, draft_pangkat=$28, draft_jabatan=$29,
-		draft_last_sk_pejabat=$30, draft_last_sk_tanggal=$31, draft_last_sk_nomor=$32, draft_last_sk_tmt=$33,
-		draft_last_sk_masa_tahun=$34, draft_last_sk_masa_bulan=$35,
-		draft_last_kp_golongan=$36, draft_last_kp_tmt=$37, draft_last_kp_nomor=$38, draft_last_kp_tanggal=$39, draft_last_kp_pejabat=$40,
-		draft_last_kp_masa_tahun=$41, draft_last_kp_masa_bulan=$42,
-		draft_mkg_lama_tahun=$43, draft_mkg_lama_bulan=$44, draft_mkg_baru_tahun=$45, draft_mkg_baru_bulan=$46,
-		draft_masa_perjanjian=$47, draft_perpanjangan_kontrak=$48, tmt_awal=$50 WHERE id=$49`,
-		newStatus, proposedTMT, proposedMasaKerja, proposedTMTKGBLast, change.PangkatGol, change.Pangkat, change.Jabatan, change.UnitID, change.EffectiveDate,
-		nullIfEmpty(change.Note), currentSalary, nextSalary,
-		files.Main.Name, nullIfEmpty(files.Main.Path), files.Main.Size,
-		nullIfEmpty(files.KP.Name), nullIfEmpty(files.KP.Path), files.KP.Size,
-		nullIfEmpty(files.KGB.Name), nullIfEmpty(files.KGB.Path), files.KGB.Size,
-		nullIfEmpty(files.SKP.Name), nullIfEmpty(files.SKP.Path), files.SKP.Size,
-		nullIfEmpty(draft.BirthPlace), draft.BirthDate, nullIfEmpty(draft.Karpeg), nullIfEmpty(draft.Pangkat), nullIfEmpty(draft.Jabatan),
-		nullIfEmpty(draft.LastSKPejabat), draft.LastSKTanggal, nullIfEmpty(draft.LastSKNomor), draft.LastSKTMT,
-		draft.LastSKMasaTahun, draft.LastSKMasaBulan,
-		nullIfEmpty(draft.LastKPGolongan), draft.LastKPTMT, nullIfEmpty(draft.LastKPNomor), draft.LastKPTanggal, nullIfEmpty(draft.LastKPPejabat),
-		draft.LastKPMasaTahun, draft.LastKPMasaBulan,
-		draft.MKGLamaTahun, draft.MKGLamaBulan, draft.MKGBaruTahun, draft.MKGBaruBulan,
-		nullIfEmpty(draft.MasaPerjanjian), draft.Perpanjangan, id, tmtAwal); err != nil {
+	if err := applyDraftUpdate(ctx, tx, id, draftUpdate{
+		Status:             newStatus,
+		ProposedTMT:        proposedTMT,
+		ProposedMasaKerja:  proposedMasaKerja,
+		ProposedTMTKGBLast: proposedTMTKGBLast,
+		Change:             change,
+		Draft:              draft,
+		CurrentSalary:      currentSalary,
+		NextSalary:         nextSalary,
+		Files:              files,
+		TMTAwal:            tmtAwal,
+		BumpSubmittedAt:    true,
+		ClearRejectionNote: true,
+	}); err != nil {
 		return Submission{}, err
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE submissions s SET
-			snapshot_name=t.name, snapshot_nip=t.nip, snapshot_birth_date=t.birth_date,
-			snapshot_asn_type=t.asn_type, snapshot_pangkat_gol=t.pangkat_gol,
-			snapshot_pangkat=t.pangkat, snapshot_jabatan=t.jabatan,
-			snapshot_masa_kerja_tahun=t.masa_kerja_tahun, snapshot_birth_place=t.birth_place, snapshot_karpeg=t.karpeg,
-			snapshot_last_sk_pejabat=t.last_sk_pejabat, snapshot_last_sk_tanggal=t.last_sk_tanggal, snapshot_last_sk_nomor=t.last_sk_nomor,
-			snapshot_last_sk_tmt_berlaku=t.last_sk_tmt_berlaku, snapshot_last_sk_masa_kerja_tahun=t.last_sk_masa_kerja_tahun, snapshot_last_sk_masa_kerja_bulan=t.last_sk_masa_kerja_bulan,
-			snapshot_unit_id=t.unit_id, snapshot_unit_name=u.name
-		FROM teachers t JOIN units u ON u.id=t.unit_id
-		WHERE s.id=$1 AND t.id=s.teacher_id`, id); err != nil {
-		return Submission{}, fmt.Errorf("snapshot data BKN saat submit ulang: %w", err)
 	}
 	detailsMap := map[string]any{"from": oldStatus, "to": newStatus, "files": FileNames(files)}
 	if len(change.AuditDetails) > 0 {
@@ -425,6 +471,122 @@ func Resubmit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, propos
 		return Submission{}, err
 	}
 	return GetSubmission(ctx, pool, id)
+}
+
+// KoreksiDinas memperbaiki data pengajuan pada tahap menunggu_dinas, sebelum
+// usulan diteruskan ke pimpinan untuk TTE (keputusan owner 2026-09-11).
+// Status TIDAK berubah — usulan tetap di antrean Dinas — dan berkas tidak
+// diganti di sini (berkas keliru tetap lewat mekanisme tolak-kembali).
+// Seluruh perbedaan nilai sebelum dan sesudah dicatat ke audit beserta catatan
+// koreksi dari petugas.
+func KoreksiDinas(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, proposedTMT time.Time, proposedMasaKerja *int, proposedTMTKGBLast, tmtAwal *time.Time, change TeacherChange, draft LetterDraft, currentSalary, nextSalary string, files SubmissionFiles, note, ip string) (Submission, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return Submission{}, err
+	}
+	defer tx.Rollback(ctx)
+	row := tx.QueryRow(ctx, submissionSelect+` WHERE s.id=$1 FOR UPDATE OF s`, id)
+	old, err := scanSubmission(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Submission{}, ErrNotFound
+	}
+	if err != nil {
+		return Submission{}, err
+	}
+	if old.Status != "menunggu_dinas" {
+		return Submission{}, ErrConflict
+	}
+	before := koreksiSnapshot(old, old.ProposedTMT, old.ProposedPangkatGol, old.CurrentSalary, old.NextSalary)
+	if err := applyDraftUpdate(ctx, tx, id, draftUpdate{
+		Status:             old.Status,
+		ProposedTMT:        proposedTMT,
+		ProposedMasaKerja:  proposedMasaKerja,
+		ProposedTMTKGBLast: proposedTMTKGBLast,
+		Change:             change,
+		Draft:              draft,
+		CurrentSalary:      currentSalary,
+		NextSalary:         nextSalary,
+		Files:              files,
+		TMTAwal:            tmtAwal,
+		BumpSubmittedAt:    false,
+		ClearRejectionNote: false,
+	}); err != nil {
+		return Submission{}, err
+	}
+	after := koreksiSnapshot(old, proposedTMT, change.PangkatGol, currentSalary, nextSalary)
+	changed := make([]string, 0, len(before))
+	for k, v := range before {
+		if fmt.Sprint(after[k]) != fmt.Sprint(v) {
+			changed = append(changed, k)
+		}
+	}
+	sort.Strings(changed)
+	detailsMap := map[string]any{
+		"status":  old.Status,
+		"note":    note,
+		"sebelum": before,
+		"sesudah": after,
+		"diubah":  changed,
+	}
+	if len(change.AuditDetails) > 0 {
+		detailsMap["perubahan_data"] = change.AuditDetails
+	}
+	details, _ := json.Marshal(detailsMap)
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs (actor_user_id, submission_id, action, details, ip) VALUES ($1, $2, 'koreksi_dinas', $3, $4)`, actorID, id, details, ip); err != nil {
+		return Submission{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Submission{}, err
+	}
+	return GetSubmission(ctx, pool, id)
+}
+
+// koreksiSnapshot merangkum nilai naskah yang dicetak dan nilai gaji, dipakai
+// untuk mencatat perbedaan sebelum/sesudah koreksi.
+func koreksiSnapshot(s Submission, tmt time.Time, golongan *string, current, next string) map[string]string {
+	d := s.LetterDraftValues()
+	ptr := func(v *int) string {
+		if v == nil {
+			return ""
+		}
+		return fmt.Sprint(*v)
+	}
+	dateStr := func(v *time.Time) string {
+		if v == nil {
+			return ""
+		}
+		return v.Format("2006-01-02")
+	}
+	return map[string]string{
+		"proposed_tmt":        tmt.Format("2006-01-02"),
+		"pangkat_gol":         derefString(golongan),
+		"current_salary":      current,
+		"next_salary":         next,
+		"birth_place":         d.BirthPlace,
+		"birth_date":          dateStr(d.BirthDate),
+		"karpeg":              d.Karpeg,
+		"pangkat":             d.Pangkat,
+		"jabatan":             d.Jabatan,
+		"last_sk_pejabat":     d.LastSKPejabat,
+		"last_sk_tanggal":     dateStr(d.LastSKTanggal),
+		"last_sk_nomor":       d.LastSKNomor,
+		"last_sk_tmt":         dateStr(d.LastSKTMT),
+		"last_sk_masa_tahun":  ptr(d.LastSKMasaTahun),
+		"last_sk_masa_bulan":  ptr(d.LastSKMasaBulan),
+		"last_kp_golongan":    d.LastKPGolongan,
+		"last_kp_tmt":         dateStr(d.LastKPTMT),
+		"last_kp_nomor":       d.LastKPNomor,
+		"last_kp_tanggal":     dateStr(d.LastKPTanggal),
+		"last_kp_pejabat":     d.LastKPPejabat,
+		"last_kp_masa_tahun":  ptr(d.LastKPMasaTahun),
+		"last_kp_masa_bulan":  ptr(d.LastKPMasaBulan),
+		"mkg_lama_tahun":      ptr(d.MKGLamaTahun),
+		"mkg_lama_bulan":      ptr(d.MKGLamaBulan),
+		"mkg_baru_tahun":      ptr(d.MKGBaruTahun),
+		"mkg_baru_bulan":      ptr(d.MKGBaruBulan),
+		"masa_perjanjian":     d.MasaPerjanjian,
+		"perpanjangan":        dateStr(d.Perpanjangan),
+	}
 }
 
 // ValidateSubmissionDraft menolak naskah bolong sebelum verifikasi atau TTE.

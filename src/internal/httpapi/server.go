@@ -104,6 +104,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/verifications/dinas/{id}", s.withAuth("verifikator_dinas", "admin_dinas")(s.handleDinasDetail))
 	mux.HandleFunc("POST /api/v1/verifications/dinas/{id}/approve", s.withAuth("verifikator_dinas", "admin_dinas")(s.handleDinasApprove))
 	mux.HandleFunc("POST /api/v1/verifications/dinas/{id}/reject", s.withAuth("verifikator_dinas", "admin_dinas")(s.handleDinasReject))
+	// Koreksi data oleh petugas Dinas sebelum diteruskan ke pimpinan (TTE).
+	mux.HandleFunc("POST /api/v1/verifications/dinas/{id}/koreksi", s.withAuth("admin_dinas")(s.handleDinasKoreksi))
 
 	mux.HandleFunc("GET /api/v1/letters/pending-tte", s.withAuth("pimpinan", "admin_dinas", "verifikator_dinas")(s.handlePendingTTE))
 	mux.HandleFunc("POST /api/v1/letters/{submission_id}/sign", s.withAuth("pimpinan")(s.handleSignLetter))
