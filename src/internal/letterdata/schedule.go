@@ -61,22 +61,12 @@ func dateOnly(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// MasaKerjaFromTMT menghitung masa kerja golongan dari TMT awal (CPNS atau
-// pengangkatan PPPK) sampai TMT KGB berlaku, dibulatkan ke bawah ke kelipatan
-// dua tahun. Dipakai sebagai acuan penentu gaji.
+// MasaKerjaFromTMT menghitung masa kerja dari TMT awal (CPNS atau pengangkatan
+// PPPK) sampai TMT KGB berlaku, dibulatkan ke bawah ke kelipatan dua tahun.
+// Dipakai sebagai fallback ketika masa kerja SK KGB belum tersimpan di master
+// (keputusan owner 2026-09-03); nilai yang tersimpan di SK selalu menang.
 func MasaKerjaFromTMT(tmtAwal, tmtBerlaku time.Time) int {
 	return EvenYear(yearsBetween(tmtAwal, tmtBerlaku))
-}
-
-// MasaKerjaKGB menentukan masa kerja KGB baru: masa kerja KGB sebelumnya + 2
-// tahun bila tersimpan dari SK (mencakup peninjauan masa kerja seperti wiyata
-// bakti yang sudah tercatat di SK sebelumnya); selain itu dihitung dari TMT.
-// mkgSK: masa kerja tahun menurut SK KGB terakhir (nil bila belum ada).
-func MasaKerjaKGB(mkgSK *int, tmtAwal, tmtBerlaku time.Time) int {
-	if mkgSK != nil && *mkgSK >= 0 {
-		return *mkgSK + 2
-	}
-	return MasaKerjaFromTMT(tmtAwal, tmtBerlaku)
 }
 
 const (

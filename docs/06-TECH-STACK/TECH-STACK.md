@@ -1,7 +1,7 @@
 # TECH STACK — SI CENDIKIA v1.0 (FINAL)
 
 > Fase 6 dari 6 — **FINAL, disetujui owner 2026-08-16**. Sumber: PRD v1.6, ERD v1.0, API v1.2, UI/UX v1.0, ARCHITECTURE v1.1.
-> Keputusan owner: PDF = `wkhtmltopdf`; frontend = server-rendered + vanilla JS (mengikuti rekomendasi).
+> Keputusan owner: frontend = server-rendered + vanilla JS (mengikuti rekomendasi). PDF surat dirender dari **template DOCX dinas** via **LibreOffice** (`soffice`) di server (revisi 2026-08-17 saat template DOCX menggantikan HTML).
 
 ## 1. Prinsip Pemilihan
 
@@ -19,7 +19,7 @@
 | **Frontend** | Server-rendered `html/template` + CSS minimal + vanilla JS | Tanpa build step Node, tanpa SPA; grafik pakai CSS bar (UI/UX §4.0); ponsel tetap responsif |
 | **Basis data** | PostgreSQL 16 | Sesuai referensi e-KGB; ERD ditulis untuk PostgreSQL |
 | **Akses DB** | `pgx` (driver) + SQL parameterized langsung | Tanpa ORM berat; 9 tabel sederhana; menghindari masalah yang pernah ditemui di proyek Go sebelumnya (mis. COALESCE lintas tabel) |
-| **PDF surat** | `wkhtmltopdf` (binary statis) | Render konsep surat dari template e-KGB; hasil PDF dikirim ke eSign |
+| **PDF surat** | **LibreOffice** (`soffice`) + template DOCX dinas | Isi placeholder pada `templates/pns.docx` / `pppk.docx`, konversi ke PDF oleh `soffice`; hasil dikirim ke eSign |
 | **TTE** | REST API **eSign Kominfo** (Esign Client Service 2.2.2), HTTP client stdlib | Integrasi nyata; dokumentasi Postman di `local/esign-kominfo/`; env dev `esign-dev.layanan.go.id` |
 | **Excel impor** | `github.com/xuri/excelize/v2` | Baca file BKN & daftar akun petugas (.xlsx); library Go standar |
 | **Auth** | Session cookie HMAC-signed (httpOnly, Secure, SameSite) + token CSRF | Sederhana, sesuai arsitektur monolitik; password bcrypt (`golang.org/x/crypto/bcrypt`) |
@@ -54,7 +54,7 @@ src/
 
 ### 4.1 Mesin PDF surat — KEPUTUSAN FINAL
 
-**`wkhtmltopdf` binary statis** (rekomendasi diterima owner, 2026-08-16). Template e-KGB adalah HTML+CSS sederhana (kop, @page, DejaVu) yang kompatibel. Cadangan terdokumentasi: WeasyPrint jika format surat berkembang di masa depan.
+**LibreOffice + template DOCX dinas** (revisi 2026-08-17, keputusan owner: naskah diisi dari template Word asli agar layout tidak dibuat ulang). Kop, tabel, dan blok tanda tangan mengikuti file DOCX yang sudah diverifikasi Dinas; renderer hanya mengganti placeholder. Draft DOCX dapat diunduh tanpa konversi (`RenderLetterDOCX`), sedangkan pratinjau PDF dan naskah TTE memerlukan `soffice` terpasang.
 
 ### 4.2 Frontend — KEPUTUSAN FINAL
 
@@ -74,7 +74,7 @@ src/
 | DB | `github.com/jackc/pgx/v5` |
 | Hash password | `golang.org/x/crypto/bcrypt` |
 | Excel | `github.com/xuri/excelize/v2` |
-| PDF render | binary eksternal `wkhtmltopdf` |
+| PDF render | binary eksternal `soffice` (LibreOffice) untuk konversi DOCX → PDF |
 | TTE eSign | REST API eSign Kominfo — HTTP client stdlib + Basic Auth; `id_dokumen` disimpan di `letters.tte_receipt_id` |
 
 Total: **1 bahasa, 1 database, 1 web server, 4 library Go, 1 binary PDF**. Ini sesuai semangat "cepat, efektif, ringan".
@@ -83,7 +83,7 @@ Total: **1 bahasa, 1 database, 1 web server, 4 library Go, 1 binary PDF**. Ini s
 
 | Risiko | Mitigasi |
 |---|---|
-| `wkhtmltopdf` tidak lagi di-maintain | Template surat sederhana & stabil; cadangan WeasyPrint terdokumentasi; uji regresi visual di E2E |
+| `soffice` tidak terpasang di server | `PDF_BIN` dapat menunjuk binary lain; `RenderLetterDOCX` tetap bekerja tanpa konversi (draft Word), sedangkan pratinjau PDF/naskah TTE menampilkan galat jelas |
 | eSign Kominfo dev environment berubah / mati | Kredensial & koleksi ada di `local/`; verifikasi `GET /api/user/status/{nik}` sebelum sign; fallback: mode simulasi lokal yang jelas-jelas ditandai (hanya untuk uji alur, bukan produksi) |
 | Go stdlib routing kurang familier | Pola routing 1.22+ sederhana; dokumentasi via Context7 saat implementasi |
 | Tanpa React, fitur interaktif terbatas | Semua interaksi yang dibutuhkan (form, konfirmasi, fetch stats, pratinjau PDF) cukup dengan vanilla JS |

@@ -241,15 +241,32 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		if t.TMTKGBLast != nil {
 			me["tmt_kgb_last"] = t.TMTKGBLast.Format("2006-01-02")
 		}
-		// Pra-isi gaji & masa kerja dari TMT awal → TMT berlaku (jalur B).
-		// Tanpa TMT awal jangan menebak — tandai perlu dilengkapi.
+		// Pra-isi gaji & baris masa kerja lewat modul bersama (letterdata.HitungMKG)
+		// supaya dasbor menampilkan angka yang sama persis dengan naskah SK:
+		// poin 6 = masa SK KGB terakhir, poin 8 = KGB + 2 th 0 bl. TMT awal tetap
+		// wajib sebagai acuan TMT berlaku; tanpa itu jangan menebak.
 		if t.TMTAwal != nil && t.MasaKerjaSource != "belum_tersedia" {
-			masaBaru := letterdata.MasaKerjaFromTMT(*t.TMTAwal, tmtBerlaku)
-			masaLama := masaBaru - 2
-			if masaLama < 0 {
-				masaLama = 0
+			kgbTahun := t.LastSKMasaTahun
+			if kgbTahun == nil {
+				kgbTahun = t.LastSKMasaKerjaTahun
 			}
-			cur, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, masaLama)
+			kgbBulan := t.LastSKMasaBulan
+			if kgbBulan == nil {
+				kgbBulan = t.LastSKMasaKerjaBulan
+			}
+			// Bila SK KGB belum tersimpan di master, pratinjau memakai masa
+			// kerja dari TMT awal (keputusan 2026-09-03) agar tidak nol.
+			var fallback *int
+			if kgbTahun == nil {
+				masa := letterdata.MasaKerjaFromTMT(*t.TMTAwal, tmtBerlaku)
+				fallback = &masa
+			}
+			line := letterdata.HitungMKG(letterdata.SumberMKG{
+				KGBTahun:      kgbTahun,
+				KGBBulan:      kgbBulan,
+				FallbackTahun: fallback,
+			})
+			cur, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, line.GridLama)
 			if err != nil {
 				// Skala tak ketemu bukan alasan menggagalkan /me: dasbor tetap
 				// dimuat, gaji dikosongkan, dan salary-preview menampilkan pesan
@@ -258,10 +275,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			} else {
 				me["gaji_sekarang"] = cur
 				me["gaji_berikutnya"] = next
-				me["mkg_lama_tahun"] = masaLama
-				me["mkg_lama_bulan"] = 0
-				me["mkg_baru_tahun"] = masaLama + 2
-				me["mkg_baru_bulan"] = 0
+				me["mkg_lama_tahun"] = line.LamaTahun
+				me["mkg_lama_bulan"] = line.LamaBulan
+				me["mkg_baru_tahun"] = line.BaruTahun
+				me["mkg_baru_bulan"] = line.BaruBulan
 			}
 		} else {
 			me["data_perlu_dilengkapi"] = true

@@ -111,7 +111,7 @@ TTE memakai **layanan resmi eSign Kominfo** — API "Esign Client Service for Us
 
 - **Env dev**: `https://esign-dev.layanan.go.id` (kredensial uji ada di environment Postman, lokal saja).
 - **Alur** (detail pola di PRD §10):
-  1. Render konsep surat → PDF (`wkhtmltopdf`).
+  1. Render konsep surat → PDF. Naskah diisi dari **template DOCX dinas** (`internal/pdf/templates/pns.docx` dan `pppk.docx`) dengan penggantian placeholder, dikonversi ke PDF oleh **LibreOffice** (`soffice`) di server.
   2. Pimpinan menginput passphrase di layar TTE (tidak disimpan).
   3. `POST /api/v2/sign/pdf` — body JSON: `nik` pimpinan, `passphrase`, `signatureProperties[0]` = {imageBase64 TTD pimpinan, tampilan VISIBLE, page 1, originX/originY/width/height sesuai blok ttd template}, `file` = base64 PDF.
   4. Simpan `id_dokumen` → `letters.tte_receipt_id`.

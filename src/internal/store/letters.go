@@ -122,9 +122,12 @@ func PreviewLetterNumber(ctx context.Context, pool *pgxpool.Pool) (string, error
 	return number, nil
 }
 
-// ReleaseIssue membatalkan reservation jika rendering/TTE gagal.
+// ReleaseIssue membatalkan reservation jika rendering/TTE gagal. Nomor yang
+// sudah tercadang ikut dikosongkan: penghitung nomor (BeginIssue) menghitung
+// submission berstatus menunggu_tte yang tte_number-nya masih terisi, sehingga
+// nomor yang ditinggalkan akan membuat urutan melompat pada percobaan berikutnya.
 func ReleaseIssue(ctx context.Context, pool *pgxpool.Pool, submissionID int64, lockToken string) error {
-	_, err := pool.Exec(ctx, `UPDATE submissions SET tte_lock_token=NULL, tte_lock_expires_at=NULL, updated_at=now() WHERE id=$1 AND status='menunggu_tte' AND tte_lock_token=$2`, submissionID, lockToken)
+	_, err := pool.Exec(ctx, `UPDATE submissions SET tte_lock_token=NULL, tte_lock_expires_at=NULL, tte_number=NULL, updated_at=now() WHERE id=$1 AND status='menunggu_tte' AND tte_lock_token=$2`, submissionID, lockToken)
 	return err
 }
 

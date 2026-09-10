@@ -18,34 +18,34 @@ func intptr(n int) *int { return &n }
 
 func validPNS() Draft {
 	return Draft{
-		ASNType:       "pns",
-		BirthPlace:    "Grobogan",
-		BirthDate:     date("1990-02-13"),
-		Karpeg:        "I 123456",
-		Pangkat:       "Penata Muda Tingkat I",
-		Jabatan:       "Guru Ahli Pertama",
-		LastSKPejabat: "Kepala Dinas Pendidikan",
-		LastSKNomor:   "800/001/4.2/2024",
-		LastSKTanggal: date("2020-12-01"),
-		LastSKTMT:     date("2020-12-01"),
+		ASNType:         "pns",
+		BirthPlace:      "Grobogan",
+		BirthDate:       date("1990-02-13"),
+		Karpeg:          "I 123456",
+		Pangkat:         "Penata Muda Tingkat I",
+		Jabatan:         "Guru Ahli Pertama",
+		LastSKPejabat:   "Kepala Dinas Pendidikan",
+		LastSKNomor:     "800/001/4.2/2024",
+		LastSKTanggal:   date("2020-12-01"),
+		LastSKTMT:       date("2020-12-01"),
 		LastSKMasaTahun: intptr(4),
 		LastSKMasaBulan: intptr(0),
-		LastKPGolongan: "III/b",
-		LastKPTMT:      date("2025-07-01"),
+		LastKPGolongan:  "III/b",
+		LastKPTMT:       date("2025-07-01"),
 		LastKPMasaTahun: intptr(5),
 		LastKPMasaBulan: intptr(0),
-		LastKPNomor:    "800.1.3.2/795/2025",
-		LastKPTanggal:  date("2025-06-20"),
-		LastKPPejabat:  "BUPATI GROBOGAN",
-		MKGLamaTahun:  4,
-		MKGLamaBulan:  0,
-		MKGBaruTahun:  6,
-		MKGBaruBulan:  0,
-		ProposedTMT:   *date("2026-12-01"),
-		CurrentSalary: "3089300",
-		NextSalary:    "3186600",
-		UnitName:      "SDN 3 GROBOGAN",
-		PangkatGol:    "III/b",
+		LastKPNomor:     "800.1.3.2/795/2025",
+		LastKPTanggal:   date("2025-06-20"),
+		LastKPPejabat:   "BUPATI GROBOGAN",
+		MKGLamaTahun:    4,
+		MKGLamaBulan:    0,
+		MKGBaruTahun:    6,
+		MKGBaruBulan:    0,
+		ProposedTMT:     *date("2026-12-01"),
+		CurrentSalary:   "3089300",
+		NextSalary:      "3186600",
+		UnitName:        "SDN 3 GROBOGAN",
+		PangkatGol:      "III/b",
 	}
 }
 
@@ -153,5 +153,60 @@ func TestValidateDraftTanpaMKGKGBWajibDitolak(t *testing.T) {
 	d.LastSKMasaTahun = nil
 	if err := ValidateDraft(d); err == nil {
 		t.Fatal("draft tanpa masa kerja KGB harus ditolak")
+	}
+}
+
+// TestValidateDraftPoin8DariGridPoin6 mengunci regresi insiden #125: saat SK KP
+// lebih baru dan berbulan (5 th 7 bl), poin 6 mencetak mentah 05/07 tetapi
+// poin 8 memakai grid genap poin 6 (4) + 2 = 06/00 — bukan 07/07 (bekas
+// implementasi "lama + 2 bulan sama") dan bukan 07/00 (bekas "lama + 2").
+func TestValidateDraftPoin8DariGridPoin6(t *testing.T) {
+	d := validPNS()
+	d.MKGLamaTahun = 5
+	d.MKGLamaBulan = 7
+	d.MKGBaruTahun = 6
+	d.MKGBaruBulan = 0
+	if err := ValidateDraft(d); err != nil {
+		t.Fatalf("poin 6 mentah 5/7 dengan poin 8 = grid+2 (6/0) harus lolos: %v", err)
+	}
+
+	d.MKGBaruTahun = 7
+	d.MKGBaruBulan = 7
+	if err := ValidateDraft(d); err == nil {
+		t.Fatal("poin 8 mengikuti bulan SK pemenang (07/07) harus ditolak")
+	}
+
+	d.MKGBaruTahun = 7
+	d.MKGBaruBulan = 0
+	if err := ValidateDraft(d); err == nil {
+		t.Fatal("poin 8 = angka poin 6 + 2 tanpa grid (07/00) harus ditolak")
+	}
+}
+
+// TestValidateDraftPoin8KasusDivergen mengunci bentuk #119/#121/#124: saat masa
+// SK pemenang bukan kelipatan dua dan berbeda dari masa SK KGB, poin 8 harus
+// ikut grid angka cetak poin 6. Untuk poin 6 = 26 th, poin 8 = 28 th (bukan 26).
+func TestValidateDraftPoin8KasusDivergen(t *testing.T) {
+	d := validPNS()
+	d.MKGLamaTahun = 26
+	d.MKGLamaBulan = 0
+	d.MKGBaruTahun = 28
+	d.MKGBaruBulan = 0
+	if err := ValidateDraft(d); err != nil {
+		t.Fatalf("poin 6 26/0 dengan poin 8 28/0 harus lolos: %v", err)
+	}
+	d.MKGBaruTahun = 26
+	if err := ValidateDraft(d); err == nil {
+		t.Fatal("poin 8 = 26 (dipatok ke masa KGB, bukan angka cetak) harus ditolak")
+	}
+
+	// Poin 6 ganjil berbulan (15/6) → grid 14 → poin 8 = 16.
+	d = validPNS()
+	d.MKGLamaTahun = 15
+	d.MKGLamaBulan = 6
+	d.MKGBaruTahun = 16
+	d.MKGBaruBulan = 0
+	if err := ValidateDraft(d); err != nil {
+		t.Fatalf("poin 6 15/6 dengan poin 8 16/0 harus lolos: %v", err)
 	}
 }

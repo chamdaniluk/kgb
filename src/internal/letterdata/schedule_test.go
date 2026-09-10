@@ -83,27 +83,6 @@ func TestEvenYearFloor(t *testing.T) {
 	}
 }
 
-func TestMasaKerjaFromTMTGenapDariTMTCPNS(t *testing.T) {
-	// PNS TMT CPNS 1 Jan 2020 → TMT berlaku 1 Jan 2026 = 6 tahun genap.
-	if got := MasaKerjaFromTMT(d("2020-01-01"), d("2026-01-01")); got != 6 {
-		t.Fatalf("masa kerja = %d, ingin 6", got)
-	}
-}
-
-func TestMasaKerjaFromTMTTahunGanjilDibulatkanKeBawah(t *testing.T) {
-	// TMT CPNS 1 Jun 2021 → TMT berlaku 1 Des 2026 = 5 tahun aktual → 4 (genap).
-	if got := MasaKerjaFromTMT(d("2021-06-01"), d("2026-12-01")); got != 4 {
-		t.Fatalf("masa kerja = %d, ingin 4", got)
-	}
-}
-
-func TestMasaKerjaFromTMTAwalSetelahBerlakuJadiNol(t *testing.T) {
-	// TMT awal setelah TMT berlaku tidak boleh menghasilkan masa kerja negatif.
-	if got := MasaKerjaFromTMT(d("2027-01-01"), d("2026-01-01")); got != 0 {
-		t.Fatalf("masa kerja = %d, ingin 0", got)
-	}
-}
-
 func TestNominationBucketJendelaEnamSampaiTigaBulan(t *testing.T) {
 	// TMT 1 Des 2026, hari ini 17 Agu 2026 ≈ 3,5 bulan → nominasi.
 	if got := NominationBucket(d("2026-12-01"), d("2026-08-17")); got != BucketNominasi {
@@ -132,18 +111,13 @@ func TestNominationBucketMendatangDanKosong(t *testing.T) {
 	}
 }
 
-// Peninjauan masa kerja: MKG SK sebelumnya + 2, bukan dari TMT CPNS.
-func TestMasaKerjaKGBMemakaiSKSebelumnya(t *testing.T) {
-	delapan := 8
+// Peninjauan masa kerja (wiyata bakti): KGB = masa SK sebelumnya + 2,
+// bukan dihitung dari TMT CPNS. Aturan ini kini tinggal di HitungMKG.
+func TestMasaKerjaKGBNilaiPeninjauanDariSK(t *testing.T) {
 	// TMT CPNS Des 2020 + peninjauan 4 th → SK sebelumnya MKG 8.
 	// KGB 2026: 8 + 2 = 10 (bukan 6 dari TMT).
-	got := MasaKerjaKGB(&delapan, time.Date(2020, 12, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC))
-	if got != 10 {
-		t.Errorf("MKG peninjauan = %d, want 10", got)
-	}
-	// Tanpa SK: fallback hitung TMT (6).
-	got = MasaKerjaKGB(nil, time.Date(2020, 12, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC))
-	if got != 6 {
-		t.Errorf("MKG fallback = %d, want 6", got)
+	line := HitungMKG(SumberMKG{KGBTahun: intp(8), KGBBulan: intp(0)})
+	if line.BaruTahun != 10 || line.BaruBulan != 0 {
+		t.Errorf("MKG peninjauan = %d/%d, want 10/0", line.BaruTahun, line.BaruBulan)
 	}
 }

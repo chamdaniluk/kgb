@@ -67,30 +67,6 @@ func (s *Server) teacherForUser(r *http.Request) (store.Teacher, bool) {
 	return t, true
 }
 
-// resolveKGBInputs memilih data master atau koreksi yang diisi saat pengajuan.
-// Masa kerja harus tersedia untuk menghitung skala gaji; TMT KGB terakhir
-// boleh kosong pada seeding awal dan hanya dipakai bila diisi.
-func resolveKGBInputs(teacher store.Teacher, proposedMasaKerja *int, proposedTMTKGBLast *time.Time, proposedTMT time.Time) (int, *time.Time, error) {
-	masaKerja := teacher.MasaKerjaTahun
-	if proposedMasaKerja != nil {
-		masaKerja = *proposedMasaKerja
-	}
-	if masaKerja < 0 {
-		return 0, nil, errors.New("masa kerja tidak boleh negatif")
-	}
-	if proposedMasaKerja == nil && teacher.MasaKerjaSource == "belum_tersedia" {
-		return 0, nil, errors.New("masa kerja wajib dilengkapi pada pengajuan")
-	}
-	last := teacher.TMTKGBLast
-	if proposedTMTKGBLast != nil {
-		last = proposedTMTKGBLast
-	}
-	if last != nil && last.After(proposedTMT) {
-		return 0, nil, errors.New("TMT KGB terakhir tidak boleh setelah TMT usulan")
-	}
-	return masaKerja, last, nil
-}
-
 type preparedKGB struct {
 	ProposedTMT time.Time
 	LastTMT     *time.Time
@@ -210,6 +186,14 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 		default:
 			return preparedKGB{}, errors.New("unit kerja tidak dikenal")
 		}
+		// Unit tujuan bertipe Dinas hanya masuk akal bagi pegawai Dinas, yang
+		// usulannya memang langsung berstatus menunggu_dinas. Bagi pegawai unit
+		// lain, memilih unit Dinas akan membuat usulan berstatus menunggu_unit
+		// padahal unit Dinas tidak punya verifikator unit — usulan tersangkut
+		// tanpa jalur keluar. Tolak di server, jangan hanya andalkan UI.
+		if u.Type == "dinas" && t.UnitType != "dinas" {
+			return preparedKGB{}, errors.New("unit tujuan Dinas hanya untuk pegawai Dinas; usulan Anda diverifikasi unit kerja Anda sendiri")
+		}
 		t.UnitID = u.ID
 		t.UnitName = u.Name
 	}
@@ -234,40 +218,40 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	if tmtAwal.After(tmt) {
 		return preparedKGB{}, errors.New("TMT awal tidak boleh setelah TMT KGB berlaku")
 	}
-	// Masa kerja naskah = MENTAH dari SK pemenang (keputusan owner 2026-09-10):
-	// bila SK KP menang, "Masa kerja golongan pada tgl. tsb" mencetak masa
-	// SK KP apa adanya (mis. 5 th 7 bl). KGB = +2 tahun dgn bulan sama.
-	// Grid gaji berkala (genap, utk lookup skala) dihitung terpisah.
-	mkgSK := draft.LastSKMasaTahun
-	mkgBulanSK := draft.LastSKMasaBulan
-	if kpMenang {
-		mkgSK = draft.LastKPMasaTahun
-		mkgBulanSK = draft.LastKPMasaBulan
+	// Baris masa kerja naskah lewat satu modul bersama (letterdata.HitungMKG)
+	// agar submit/kirim-ulang, pratinjau gaji, dan pratinjau dasbor tidak bisa
+	// menyimpang lagi. Ringkasnya: poin 6 = masa SK pemenang apa adanya,
+	// poin 8 = KGB terakhir + 2 tahun 0 bulan, gaji pada grid genap KGB.
+	kgbTahun := draft.LastSKMasaTahun
+	if kgbTahun == nil {
+		kgbTahun = t.LastSKMasaKerjaTahun
 	}
-	if mkgSK == nil {
-		mkgSK = t.LastSKMasaKerjaTahun
+	kgbBulan := draft.LastSKMasaBulan
+	if kgbBulan == nil {
+		kgbBulan = t.LastSKMasaKerjaBulan
 	}
-	masaTahunCetak := 0
-	if mkgSK != nil && *mkgSK >= 0 {
-		masaTahunCetak = *mkgSK
+	// Bila masa KGB belum tersimpan di master, jangkar dihitung dari TMT awal
+	// (keputusan 2026-09-03) supaya submit tidak selalu menolak seeding lama.
+	var fallbackTahun *int
+	if kgbTahun == nil {
+		masa := letterdata.MasaKerjaFromTMT(*tmtAwal, tmt)
+		fallbackTahun = &masa
 	}
-	bulanCetak := 0
-	if mkgBulanSK != nil && *mkgBulanSK >= 0 && *mkgBulanSK <= 11 {
-		bulanCetak = *mkgBulanSK
-	} else if t.LastSKMasaKerjaBulan != nil {
-		bulanCetak = *t.LastSKMasaKerjaBulan
-	}
-	lama, baru := masaTahunCetak, masaTahunCetak+2
-	bulanSK := bulanCetak
+	line := letterdata.HitungMKG(letterdata.SumberMKG{
+		KGBTahun:      kgbTahun,
+		KGBBulan:      kgbBulan,
+		FallbackTahun: fallbackTahun,
+		PemenangTahun: draft.LastKPMasaTahun,
+		PemenangBulan: draft.LastKPMasaBulan,
+		PemenangAktif: kpMenang,
+	})
+	lama, bulanLama := line.LamaTahun, line.LamaBulan
+	baru, bulanBaru := line.BaruTahun, line.BaruBulan
 	draft.MKGLamaTahun = &lama
-	draft.MKGLamaBulan = &bulanSK
+	draft.MKGLamaBulan = &bulanLama
 	draft.MKGBaruTahun = &baru
-	draft.MKGBaruBulan = &bulanSK
-	// Grid gaji berkala: normalisasi ke tahun genap (mis. 5→4) utk lookup
-	// skala; masaBaru grid = +2 dari grid lama. Tidak mengubah angka cetak.
-	gridLama := letterdata.EvenYear(lama)
-	gridBaru := gridLama + 2
-	masaLama, masaBaru := gridLama, gridBaru
+	draft.MKGBaruBulan = &bulanBaru
+	masaLama, masaBaru := line.GridLama, line.GridBaru
 	// Golongan efektif: KP bila tanggal SK-nya lebih baru dari SK KGB
 	// terakhir (jangka waktu KGB tetap 2 tahun dari KGB terakhir),
 	// selain itu golongan KGB/guru.
@@ -637,33 +621,36 @@ func (s *Server) handleSalaryPreview(w http.ResponseWriter, r *http.Request) {
 		}
 		gol = store.EffectiveGolongan(store.KPLast{Golongan: kpGol, TMT: kpTMT, Tanggal: kpTanggal}, kgbTanggal, gol)
 	}
-	// Aturan sama dengan submit: MKG SK pemenang (KP bila tanggal SK-nya
-	// lebih baru dari SK KGB) + 2 bila ada, fallback hitung TMT.
-	// Parameter opsional last_kgb_masa_tahun / last_kp_masa_tahun dari form.
-	var mkgSK *int
-	if raw := strings.TrimSpace(q.Get("last_kgb_masa_tahun")); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
-			mkgSK = &n
-		}
+	// Baris masa kerja lewat modul bersama (letterdata.HitungMKG) — aturan
+	// identik dengan submit: poin 6 = masa SK pemenang apa adanya, poin 8 =
+	// KGB + 2 th 0 bl, gaji pada grid genap KGB. Bulan kedua SK ikut dibaca
+	// supaya angka pratinjau sama persis dengan yang akan dicetak.
+	kgbTh := optionalQueryInt(q.Get("last_kgb_masa_tahun"))
+	if kgbTh == nil {
+		kgbTh = t.LastSKMasaKerjaTahun
 	}
-	if store.SKNewer(kpTanggal, kgbTanggal) {
-		mkgSK = nil
-		if raw := strings.TrimSpace(q.Get("last_kp_masa_tahun")); raw != "" {
-			if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
-				mkgSK = &n
-			}
-		}
+	kgbBl := optionalQueryInt(q.Get("last_kgb_masa_bulan"))
+	if kgbBl == nil {
+		kgbBl = t.LastSKMasaKerjaBulan
 	}
-	if mkgSK == nil {
-		mkgSK = t.LastSKMasaKerjaTahun
+	kpMasaTh := optionalQueryInt(q.Get("last_kp_masa_tahun"))
+	kpMasaBl := optionalQueryInt(q.Get("last_kp_masa_bulan"))
+	// Fallback masa kerja dari TMT awal → TMT berlaku bila seksi KGB belum
+	// diisi (keputusan 2026-09-03), supaya pratinjau awal tidak menampilkan nol.
+	var fallbackTh *int
+	if kgbTh == nil {
+		masa := letterdata.MasaKerjaFromTMT(*tmtAwal, tmtBerlaku)
+		fallbackTh = &masa
 	}
-	masaBaru := letterdata.MasaKerjaKGB(mkgSK, *tmtAwal, tmtBerlaku)
-	masaLama := masaBaru - 2
-	if masaLama < 0 {
-		masaLama = 0
-	}
-	masaLama = letterdata.EvenYear(masaLama)
-	masaBaru = masaLama + 2
+	line := letterdata.HitungMKG(letterdata.SumberMKG{
+		KGBTahun:      kgbTh,
+		KGBBulan:      kgbBl,
+		FallbackTahun: fallbackTh,
+		PemenangTahun: kpMasaTh,
+		PemenangBulan: kpMasaBl,
+		PemenangAktif: store.SKNewer(kpTanggal, kgbTanggal) && kpMasaTh != nil,
+	})
+	masaLama := line.GridLama
 	current, next, err := store.SalaryCurrentNext(r.Context(), s.Pool, t.ASNType, gol, masaLama)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, "SALARY_SCALE_NOT_FOUND", "Kombinasi golongan/masa kerja tidak ada di skala gaji.")
@@ -672,12 +659,28 @@ func (s *Server) handleSalaryPreview(w http.ResponseWriter, r *http.Request) {
 	writeData(w, http.StatusOK, map[string]any{
 		"current_salary":   current,
 		"next_salary":      next,
-		"mkg_lama_tahun":   masaLama,
-		"mkg_baru_tahun":   masaBaru,
+		"mkg_lama_tahun":   line.LamaTahun,
+		"mkg_lama_bulan":   line.LamaBulan,
+		"mkg_baru_tahun":   line.BaruTahun,
+		"mkg_baru_bulan":   line.BaruBulan,
 		"tmt_berlaku":      tmtBerlaku.Format("2006-01-02"),
 		"pangkat":          pangkatForGolongan(gol),
 		"golongan_efektif": gol,
 	})
+}
+
+// optionalQueryInt membaca parameter angka opsional dari query; nilai kosong
+// atau bukan angka non-negatif menghasilkan nil.
+func optionalQueryInt(raw string) *int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return nil
+	}
+	return &n
 }
 
 func (s *Server) handleGetSubmission(w http.ResponseWriter, r *http.Request) {
