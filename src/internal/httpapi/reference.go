@@ -38,7 +38,10 @@ func validPNSGolongan(gol string) bool {
 }
 
 // jabatanFungsionalGuru adalah jenjang jabatan fungsional guru yang valid
-// (PermenPANRB 1/2023) ditambah Kepala Sekolah sebagai tugas tambahan.
+// (PermenPANRB 1/2023) ditambah Kepala Sekolah sebagai tugas tambahan. "Kepala
+// Sekolah" tetap diterima di sisi server demi usulan lama, tetapi tidak lagi
+// ditawarkan di dropdown form (kepala sekolah tetap mengisi jenjang fungsional
+// gurunya; sebutan tugas tambahan bisa diketik lewat opsi Lainnya bila perlu).
 var jabatanFungsionalGuru = map[string]bool{
 	"Guru Ahli Pertama": true,
 	"Guru Ahli Muda":    true,
@@ -52,13 +55,14 @@ func validJabatanGuru(j string) bool {
 	return jabatanFungsionalGuru[strings.TrimSpace(j)]
 }
 
-// jabatanNonGuruDisdik adalah jabatan non-guru di Dinas Pendidikan yang
-// teramati di SIPPASN (probing 2026-09-03): fungsional pengawas/penilik/pamong,
-// pelaksana, dan struktural. Daftar terbuka: jabatan SIPPASN di luar daftar
-// guru namun satu dinas tetap diterima bila pola namanya dikenali.
+// validJabatanNonGuru memeriksa pola jabatan non-guru Disdik yang teramati di
+// SIPPASN (probing 2026-09-03). Sejak form membuka isian manual "Lainnya",
+// daftar ini hanya salah satu jalur penerimaan dan bukan lagi pembatas keras;
+// bentuknya tetap dijaga agar pencocokan awalan tidak meloloskan teks nyasar
+// (mis. "Guru;DROP ..." yang kebetulan berawalan "GURU").
 func validJabatanNonGuru(j string) bool {
 	j = strings.TrimSpace(j)
-	if j == "" {
+	if j == "" || !validJabatanBebas(j) {
 		return false
 	}
 	upper := strings.ToUpper(j)
@@ -77,10 +81,40 @@ func validJabatanNonGuru(j string) bool {
 	return false
 }
 
-// validJabatanUntuk memeriksa jabatan sesuai kategori pegawai.
+// validJabatanBebas menerima jabatan yang diketik manual lewat opsi "Lainnya":
+// Dinas memuat jabatan di luar daftar (pengawas, penilik, pamong, pelaksana
+// dengan sebutan lain), sehingga pengusul perlu mengisi sendiri. Yang dijaga
+// hanya bentuknya agar nilai nyasar (kosong, satu karakter, karakter kendali,
+// markup) tidak lolos; kewajiban menilai kebenaran jabatan tetap di verifikator.
+func validJabatanBebas(j string) bool {
+	runes := []rune(strings.TrimSpace(j))
+	if len(runes) < 3 || len(runes) > 120 {
+		return false
+	}
+	for _, r := range runes {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == ' ', r == '.', r == ',', r == '/', r == '(', r == ')', r == '-', r == '\'':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// validJabatanUntuk memeriksa jabatan yang diisi pengusul. Daftar guru dan
+// daftar non-guru SIPPASN dipakai sebagai rujukan pilihan, tetapi isian manual
+// ("Lainnya") tetap diterima selama bentuknya wajar — Dinas memang memuat
+// jabatan yang tidak ada di kedua daftar tersebut.
 func validJabatanUntuk(j, kategori string) bool {
 	if kategori == "non_guru" {
-		return validJabatanGuru(j) || validJabatanNonGuru(j)
+		if validJabatanGuru(j) || validJabatanNonGuru(j) {
+			return true
+		}
+		return validJabatanBebas(j)
 	}
-	return validJabatanGuru(j)
+	if validJabatanGuru(j) {
+		return true
+	}
+	return validJabatanBebas(j)
 }

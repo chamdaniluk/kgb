@@ -16,7 +16,7 @@ var logoGroboganPNG []byte
 //go:embed assets/fonts/plus-jakarta-sans-var.woff2
 var fontPJSVar []byte
 
-const assetVersion = "20260911c"
+const assetVersion = "20260911d"
 
 type pageData struct {
 	Title   string
@@ -398,6 +398,7 @@ func (s *Server) handleAppPage(w http.ResponseWriter, r *http.Request) {
 const styleCSS = `@font-face{font-family:'Plus Jakarta Sans';font-style:normal;font-weight:400 800;font-display:swap;src:url('/static/fonts/plus-jakarta-sans-var.woff2') format('woff2')}
 :root{--bg:#F2F6FB;--card:#FFFFFF;--ink:#13233F;--navy:#13233F;--navy-2:#1E335C;--line:#E8EEF6;--line-2:#DFE8F2;--border:#D8E2EF;--muted:#425573;--muted-2:#64748B;--muted-3:#64748B;--blue:#2563EB;--blue-2:#1D4ED8;--blue-soft:#E8F0FE;--cyan:#0891B2;--cyan-soft:#E0F5FB;--accent:#D97706;--accent-2:#B45309;--accent-soft:#FDF0DD;--violet:#7C3AED;--violet-2:#6D28D9;--violet-soft:#F0EAFF;--success:#16A34A;--success-2:#15803D;--success-soft:#E3F6E9;--danger:#DC2626;--danger-2:#B91C1C;--danger-soft:#FDE9E9;--grad:linear-gradient(135deg,#2563EB 0%,#0EA5E9 60%,#06B6D4 100%);--grad-soft:linear-gradient(135deg,#EAF1FE 0%,#E3F4FD 100%);--radius:18px;--radius-sm:13px;--shadow:0 1px 2px rgba(19,35,63,.05),0 10px 30px -18px rgba(19,35,63,.18);--shadow-2:0 2px 4px rgba(19,35,63,.05),0 18px 44px -20px rgba(19,35,63,.22);--font-sans:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--ring:0 0 0 3px rgba(37,99,235,.22);--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--space-6:32px;--space-7:48px;--maxw:1180px;--flow-arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235B7290' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h14'/%3E%3Cpath d='M13 5l7 7-7 7'/%3E%3C/svg%3E")}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 	html{scroll-behavior:smooth;background:radial-gradient(1100px 520px at 88% -8%,#DEE9FB 0%,rgba(222,233,251,0) 58%),radial-gradient(900px 480px at -12% 108%,#D8F1F8 0%,rgba(216,241,248,0) 55%),var(--bg)}
 	body{margin:0;font-family:var(--font-sans);color:var(--ink);line-height:1.55;min-height:100vh;min-height:100svh;display:flex;flex-direction:column;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
 h1,h2,h3,h4{font-family:var(--font-sans);letter-spacing:-.02em;color:var(--navy);font-weight:800;line-height:1.2;text-wrap:balance}
