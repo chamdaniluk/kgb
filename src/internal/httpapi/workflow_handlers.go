@@ -1205,6 +1205,40 @@ func (s *Server) handleDinasReject(w http.ResponseWriter, r *http.Request) {
 	s.handleDinasDecision(w, r, "dikembalikan_dinas", "tolak_dinas", true)
 }
 
+// handleTTEReject: pimpinan menolak di tahap TTE — usulan kembali ke
+// antrean Dinas (menunggu_dinas) untuk diperbaiki/diteruskan ulang
+// (keputusan owner 2026-09-09). Catatan penolakan wajib.
+func (s *Server) handleTTEReject(w http.ResponseWriter, r *http.Request) {
+	id, err := parsePathID(r, "submission_id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "INVALID_ID", "ID pengajuan tidak valid.")
+		return
+	}
+	var req struct {
+		Note string `json:"note"`
+	}
+	if r.Body != nil {
+		if err := decodeJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+			writeErr(w, http.StatusBadRequest, "INVALID_JSON", "Payload keputusan tidak valid.")
+			return
+		}
+	}
+	req.Note = strings.TrimSpace(req.Note)
+	if req.Note == "" {
+		writeErr(w, http.StatusBadRequest, "NOTE_REQUIRED", "Catatan penolakan wajib diisi.")
+		return
+	}
+	updated, err := store.Transition(r.Context(), s.Pool, id, userFrom(r).ID, "menunggu_tte", "menunggu_dinas", "tolak_tte", req.Note, clientIP(r))
+	if err != nil {
+		if mapStoreError(w, err) {
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "TRANSITION_FAILED", "Perubahan status gagal.")
+		return
+	}
+	writeData(w, http.StatusOK, updated)
+}
+
 // handleDinasDecision memproses keputusan dinas. Keputusan owner 2026-09-09:
 // admin dinas (admin.disdik1-6) memverifikasi SEMUA usulan yang masuk
 // dari unit (TK/SD/SMP/SKB) maupun usulan langsung pegawai Dinas;
@@ -1385,47 +1419,36 @@ func (s *Server) handleSignLetter(w http.ResponseWriter, r *http.Request) {
 	writeData(w, http.StatusCreated, map[string]any{"number": issue.Number, "issued_at": time.Now().Format(time.RFC3339), "receipt_id": sign.ReceiptID})
 }
 
-// handleDraftDOCX mengunduh draft naskah SK dalam format DOCX (Word) untuk
-// ditinjau sebelum diteruskan ke TTE. Pimpinan mengunduh saat menunggu TTE;
-// verifikator/admin Dinas ikut dapat mengunduhnya sebagai bahan pengecekan.
-// Bersifat read-only: memakai nomor pratinjau dan tidak mencadangkan sequence
-// atau lock TTE. Bila peminta bukan pimpinan, blok tanda tangan memakai
-// profil pimpinan aktif (NIK/NIP/spesimen tidak diperlukan untuk DOCX).
-func (s *Server) handleDraftDOCX(w http.ResponseWriter, r *http.Request) {
-	submissionID, err := parsePathID(r, "submission_id")
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "INVALID_ID", "ID pengajuan tidak valid.")
-		return
-	}
-	if s.Renderer == nil {
-		writeErr(w, http.StatusServiceUnavailable, "PDF_NOT_CONFIGURED", "Renderer naskah belum dikonfigurasi.")
-		return
-	}
+// draftLetterData menyiapkan data naskah SK untuk pratinjau (nomor sementara,
+// read-only: tidak mencadangkan sequence atau lock TTE). Bila peminta bukan
+// pimpinan, blok tanda tangan memakai profil pimpinan aktif.
+func (s *Server) draftLetterData(w http.ResponseWriter, r *http.Request, submissionID int64) (pdf.LetterData, bool) {
+	var ld pdf.LetterData
 	sub, err := store.GetSubmission(r.Context(), s.Pool, submissionID)
 	if err != nil {
 		if !mapStoreError(w, err) {
 			writeErr(w, http.StatusInternalServerError, "INTERNAL", "Gagal mengambil pengajuan.")
 		}
-		return
+		return ld, false
 	}
 	if sub.Status != "menunggu_tte" {
 		writeErr(w, http.StatusConflict, "NOT_PENDING_TTE", "Draft hanya tersedia saat pengajuan menunggu TTE.")
-		return
+		return ld, false
 	}
 	if !s.canAccessSubmission(r, sub) {
 		writeErr(w, http.StatusForbidden, "FORBIDDEN", "Draft bukan dalam kewenangan Anda.")
-		return
+		return ld, false
 	}
 	if err := store.ValidateSubmissionDraft(sub); err != nil {
 		if !mapStoreError(w, err) {
 			writeErr(w, http.StatusUnprocessableEntity, "DRAFT_INCOMPLETE", "Naskah SK belum lengkap untuk membuat draft.")
 		}
-		return
+		return ld, false
 	}
 	number, err := store.PreviewLetterNumber(r.Context(), s.Pool)
 	if err != nil {
 		writeErr(w, http.StatusServiceUnavailable, "TEMPLATE_UNAVAILABLE", "Template nomor surat aktif belum tersedia.")
-		return
+		return ld, false
 	}
 	signer := userFrom(r)
 	if signer.Role != "pimpinan" {
@@ -1448,7 +1471,7 @@ func (s *Server) handleDraftDOCX(w http.ResponseWriter, r *http.Request) {
 	if draft.Perpanjangan != nil {
 		perpanjangan = pdf.FormatTanggalID(*draft.Perpanjangan)
 	}
-	ld := pdf.LetterData{
+	ld = pdf.LetterData{
 		Number:              number,
 		TanggalNaskah:       pdf.TodayID(),
 		IssuedAt:            pdf.TodayID(),
@@ -1481,6 +1504,29 @@ func (s *Server) handleDraftDOCX(w http.ResponseWriter, r *http.Request) {
 		SignerNIP:           signerNIP,
 		SignerJob:           signerJob,
 	}
+	return ld, true
+}
+
+// handleDraftDOCX mengunduh draft naskah SK dalam format DOCX (Word) untuk
+// ditinjau sebelum diteruskan ke TTE. Pimpinan mengunduh saat menunggu TTE;
+// verifikator/admin Dinas ikut dapat mengunduhnya sebagai bahan pengecekan.
+// Bersifat read-only: memakai nomor pratinjau dan tidak mencadangkan sequence
+// atau lock TTE. Bila peminta bukan pimpinan, blok tanda tangan memakai
+// profil pimpinan aktif (NIK/NIP/spesimen tidak diperlukan untuk DOCX).
+func (s *Server) handleDraftDOCX(w http.ResponseWriter, r *http.Request) {
+	submissionID, err := parsePathID(r, "submission_id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "INVALID_ID", "ID pengajuan tidak valid.")
+		return
+	}
+	if s.Renderer == nil {
+		writeErr(w, http.StatusServiceUnavailable, "PDF_NOT_CONFIGURED", "Renderer naskah belum dikonfigurasi.")
+		return
+	}
+	ld, ok := s.draftLetterData(w, r, submissionID)
+	if !ok {
+		return
+	}
 	docx, err := pdf.RenderLetterDOCX(s.Renderer, ld)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "DOCX_RENDER_FAILED", "Draft naskah gagal dibuat.")
@@ -1491,6 +1537,36 @@ func (s *Server) handleDraftDOCX(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", strconv.Itoa(len(docx)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(docx)
+}
+
+// handleDraftPDF menyajikan pratinjau PDF hasil render template Word asli
+// (via LibreOffice di server) untuk layar TTE pimpinan. Read-only seperti
+// draft DOCX: nomor sementara, tanpa lock TTE. Disajikan inline agar bisa
+// dibuka di iframe pratinjau.
+func (s *Server) handleDraftPDF(w http.ResponseWriter, r *http.Request) {
+	submissionID, err := parsePathID(r, "submission_id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "INVALID_ID", "ID pengajuan tidak valid.")
+		return
+	}
+	if s.Renderer == nil {
+		writeErr(w, http.StatusServiceUnavailable, "PDF_NOT_CONFIGURED", "Renderer naskah belum dikonfigurasi.")
+		return
+	}
+	ld, ok := s.draftLetterData(w, r, submissionID)
+	if !ok {
+		return
+	}
+	body, err := pdf.RenderLetter(r.Context(), s.Renderer, ld)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "PDF_RENDER_FAILED", "Pratinjau naskah gagal dibuat.")
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="pratinjau-SK-KGB-%d.pdf"`, submissionID))
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 func (s *Server) handleLetterDownload(w http.ResponseWriter, r *http.Request) {
