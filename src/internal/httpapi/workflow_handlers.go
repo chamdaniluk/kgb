@@ -909,48 +909,83 @@ func (s *Server) saveSlotFileOptional(w http.ResponseWriter, r *http.Request, fi
 // saveSlotFilesResubmit menyimpan slot berkas kirim-ulang: slot yang tidak
 // diunggah ulang memakai berkas lama (wajib tetap ada), slot baru wajib
 // PDF maksimal 5MB. Gagal bila slot wajib kosong di lama maupun baru.
-func (s *Server) saveSlotFilesResubmit(w http.ResponseWriter, r *http.Request, asnType string, id int64) (store.SubmissionFiles, bool) {
+//
+// Mengembalikan berkas gabungan, daftar berkas BARU yang diunggah (untuk
+// dibersihkan bila pengajuan gagal disimpan), dan status. Berkas lama tidak
+// pernah masuk daftar baru: kirim ulang yang gagal tidak boleh menghapus
+// berkas yang masih dipakai pengajuan berjalan.
+func (s *Server) saveSlotFilesResubmit(w http.ResponseWriter, r *http.Request, asnType string, id int64) (store.SubmissionFiles, []store.SubmissionFile, bool) {
 	old, err := store.GetSubmission(r.Context(), s.Pool, id)
 	if err != nil {
 		if mapStoreError(w, err) {
-			return store.SubmissionFiles{}, false
+			return store.SubmissionFiles{}, nil, false
 		}
 		writeErr(w, http.StatusInternalServerError, "RESUBMIT_FAILED", "Pengajuan ulang gagal.")
-		return store.SubmissionFiles{}, false
+		return store.SubmissionFiles{}, nil, false
 	}
-	keep := func(slot store.SubmissionFile, name string, size int, path string) store.SubmissionFile {
-		if slot.Path != "" {
-			return slot
+	var fresh []store.SubmissionFile
+	cleanup := func() {
+		if s.Files == nil {
+			return
 		}
-		return store.SubmissionFile{Name: name, Path: path, Size: int64(size)}
+		for _, f := range fresh {
+			if f.Path != "" {
+				_ = s.Files.Remove(f.Path)
+			}
+		}
+	}
+	save := func(field, label string) (store.SubmissionFile, bool) {
+		slot, ok := s.saveSlotFileOptional(w, r, field, label)
+		if !ok {
+			return store.SubmissionFile{}, false
+		}
+		if slot.Path != "" {
+			fresh = append(fresh, slot)
+		}
+		return slot, true
 	}
 	needKGB := asnType != "pppk"
 	needSKP := asnType == "pppk"
 	var out store.SubmissionFiles
 	var ok bool
-	if out.KP, ok = s.saveSlotFileOptional(w, r, "file_kp", "SK terakhir"); !ok {
-		s.removeSlotFiles(out)
-		return out, false
+	if out.KP, ok = save("file_kp", "SK terakhir"); !ok {
+		cleanup()
+		return out, nil, false
 	}
-	if out.KGB, ok = s.saveSlotFileOptional(w, r, "file_kgb", "KGB terakhir"); !ok {
-		s.removeSlotFiles(out)
-		return out, false
+	if out.KGB, ok = save("file_kgb", "KGB terakhir"); !ok {
+		cleanup()
+		return out, nil, false
 	}
 	if needSKP {
-		if out.SKP, ok = s.saveSlotFileOptional(w, r, "file_skp", "SKP 2 tahun"); !ok {
-			s.removeSlotFiles(out)
-			return out, false
+		if out.SKP, ok = save("file_skp", "SKP 2 tahun"); !ok {
+			cleanup()
+			return out, nil, false
 		}
+	}
+	missing := ""
+	switch {
+	case out.KP.Path == "" && old.FilePath == "":
+		missing = "SK KP terakhir"
+	case needKGB && out.KGB.Path == "" && old.FileKGBPath == "":
+		missing = "KGB terakhir"
+	case needSKP && out.SKP.Path == "":
+		missing = "SKP 2 tahun"
+	}
+	if missing != "" {
+		cleanup()
+		writeErr(w, http.StatusUnprocessableEntity, "FILE_REQUIRED", "Berkas "+missing+" wajib diunggah (PDF, maksimal 5MB). Semua SK yang dipersyaratkan harus lengkap.")
+		return out, nil, false
+	}
+	keep := func(uploaded store.SubmissionFile, name string, size int, path string) store.SubmissionFile {
+		if uploaded.Path != "" {
+			return uploaded
+		}
+		return store.SubmissionFile{Name: name, Path: path, Size: int64(size)}
 	}
 	out.KP = keep(out.KP, old.FileKPName, old.FileKPSize, old.FileKPPath)
 	out.KGB = keep(out.KGB, old.FileKGBName, old.FileKGBSize, old.FileKGBPath)
 	out.SKP = keep(out.SKP, old.FileSKPName, old.FileSKPSize, old.FileSKPPath)
-	if out.KP.Path == "" || (needKGB && out.KGB.Path == "") || (needSKP && out.SKP.Path == "") {
-		s.removeSlotFiles(out)
-		writeErr(w, http.StatusUnprocessableEntity, "FILE_REQUIRED", "Berkas pendukung wajib dilengkapi (PDF, maksimal 5MB).")
-		return out, false
-	}
-	return out, true
+	return out, fresh, true
 }
 
 func (s *Server) removeSlotFiles(f store.SubmissionFiles) {
@@ -1019,8 +1054,9 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Kirim-ulang: slot yang tidak diunggah ulang memakai berkas lama agar
-	// pengusul cukup memperbaiki data/berkas yang salah saja.
-	slotFiles, ok := s.saveSlotFilesResubmit(w, r, t.ASNType, id)
+	// pengusul cukup memperbaiki data/berkas yang salah saja. Slot yang belum
+	// pernah ada tetap wajib diunggah (semua SK dipersyaratkan lengkap).
+	slotFiles, freshSlots, ok := s.saveSlotFilesResubmit(w, r, t.ASNType, id)
 	if !ok {
 		if hasMain {
 			_ = s.Files.Remove(mainPath)
@@ -1047,7 +1083,9 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 		if hasMain {
 			_ = s.Files.Remove(mainPath)
 		}
-		s.removeSlotFiles(slotFiles)
+		// Hanya berkas yang BARU diunggah yang dibersihkan; berkas lama tetap
+		// utuh karena pengajuan berjalan masih memakainya.
+		s.removeSlotFileList(freshSlots)
 		if mapStoreError(w, err) {
 			return
 		}
@@ -1055,6 +1093,19 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeData(w, http.StatusOK, sub)
+}
+
+// removeSlotFileList menghapus berkas fisik pada daftar slot (hanya yang
+// benar-benar baru diunggah pada satu permintaan).
+func (s *Server) removeSlotFileList(files []store.SubmissionFile) {
+	if s.Files == nil {
+		return
+	}
+	for _, f := range files {
+		if f.Path != "" {
+			_ = s.Files.Remove(f.Path)
+		}
+	}
 }
 
 func (s *Server) handleSubmissionFile(w http.ResponseWriter, r *http.Request) {
