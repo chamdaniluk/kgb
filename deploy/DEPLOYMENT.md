@@ -1,5 +1,10 @@
 # Panduan Deploy SI CENDIKIA ke VPS Produksi
 
+> **Sebagian isi dokumen ini sudah usang (ditulis 2026-08-25).** Kondisi aktual: `ADDR=127.0.0.1:18081`
+> (bukan 8080), service berjalan sebagai user `ubuntu` (bukan `si-cendikia`), dan role aplikasi kini
+> 6 (termasuk `admin_dinas`). Untuk prosedur perubahan, deploy, rollback, dan manajemen harian yang
+> sesuai kondisi server sekarang, pakai **[PANDUAN-PERUBAHAN-DAN-MANAJEMEN.md](PANDUAN-PERUBAHAN-DAN-MANAJEMEN.md)**.
+
 ## Ringkasan Status Saat Ini (2026-08-25)
 
 | Komponen | Status | Catatan |
@@ -39,7 +44,7 @@ ls -lh ../deploy/si-cendikia-server  # ~23 MB
 **Opsi B – Copy dari workstation:**
 ```bash
 # Di workstation (Windows)
-cd D:\Code\SI-CENDIKIA\si-cendikia\src
+cd D:\Code\SI-CENDIKIA\sip\si-cendikia\src
 # Build cross-platform
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../deploy/si-cendikia-server-linux-amd64 ./cmd/server
 
