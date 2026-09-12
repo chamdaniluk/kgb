@@ -115,3 +115,22 @@ artifacts/*.pdf
 artifacts/*.tmp
 /tmp/
 *.credentials.json
+
+# ---------- Data lokal & artefak runtime (JANGAN di-commit) ----------
+# PostgreSQL portabel + data dir lokal, socket, berkas unggahan, artefak build.
+# Semua ini isi mesin pengembang, bukan bagian repo.
+pgdata/
+pgportable/
+pgsock/
+sic-files/
+artifacts/
+.builds/
+tools/*.pdf
+src/tools/
+deploy/si-cendikia-server
+deploy/si-cendikia-server-*
+# Sisa uji manual di src/ (respons API, token CSRF, PDF/DOCX contoh)
+src/*.txt
+src/*.json
+src/*.pdf
+src/*.docx
