@@ -115,3 +115,57 @@ func TestRepairUnitIdentityMemulihkanSekolahBernamaSama(t *testing.T) {
 		t.Fatalf("jalan ulang tidak idempoten: %+v", second)
 	}
 }
+
+// TestRepairUnitIdentityMeleburDuplikatMemindahkanTautan memverifikasi unit
+// duplikat (nama + kecamatan sama, tanpa kd_unker) dilebur ke unit kanonik dan
+// seluruh tautannya (teachers, users, submissions) ikut berpindah.
+func TestRepairUnitIdentityMeleburDuplikatMemindahkanTautan(t *testing.T) {
+	pool := testPool(t)
+	resetSchema(t, pool)
+	ctx := context.Background()
+	if _, err := Migrate(ctx, pool, "../../migrations"); err != nil {
+		t.Fatal(err)
+	}
+	// Unit kanonik hasil perbaikan sebelumnya (sudah ber-kd_unker).
+	var canonical int64
+	if err := pool.QueryRow(ctx, `INSERT INTO units (code,name,type,district,kd_unker) VALUES ('SMP-NEGERI-6-PURWODADI-03-27-06','SMPN 6 Purwodadi - Dinas Pendidikan','smp','PURWODADI','03.27.06') RETURNING id`).Scan(&canonical); err != nil {
+		t.Fatal(err)
+	}
+	// Duplikat lama: nama + kecamatan sama, tanpa kd_unker, masih dipakai.
+	var dup int64
+	if err := pool.QueryRow(ctx, `INSERT INTO units (code,name,type,district) VALUES ('SMPN 6 Purwodadi - Dinas Pendidikan','SMPN 6 Purwodadi - Dinas Pendidikan','smp','PURWODADI') RETURNING id`).Scan(&dup); err != nil {
+		t.Fatal(err)
+	}
+	var userID int64
+	if err := pool.QueryRow(ctx, `INSERT INTO users (username,password_hash,role,name,unit_id,is_active) VALUES ('199001012010011001','x','asn','GURU SMP',$1,true) RETURNING id`, dup).Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO teachers (user_id,nip,name,asn_type,kategori,unit_id,pangkat_gol,masa_kerja_tahun,masa_kerja_source) VALUES ($1,'199001012010011001','GURU SMP','pns','guru',$2,'III/c',10,'sippasn')`, userID, dup); err != nil {
+		t.Fatal(err)
+	}
+
+	officers := []SIPPASNOfficer{
+		{NIP: "199001012010011002", Name: "GURU LAIN", JobKind: "2", JobTitle: "Guru Ahli Muda", Golongan: "III/c", UnitCode: "03.27.06", UnitName: "SMPN 6 Purwodadi - Dinas Pendidikan", Status: "1"},
+	}
+	plan, err := RepairUnitIdentity(ctx, pool, officers, true)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if plan.Merged != 1 {
+		t.Fatalf("Merged = %d, want 1 (duplikat dilebur)", plan.Merged)
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM units WHERE id=$1)`, dup).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("unit duplikat masih ada")
+	}
+	var unitID int64
+	if err := pool.QueryRow(ctx, `SELECT unit_id FROM teachers WHERE nip='199001012010011001'`).Scan(&unitID); err != nil {
+		t.Fatal(err)
+	}
+	if unitID != canonical {
+		t.Fatalf("guru tertaut ke unit %d, want %d (kanonik)", unitID, canonical)
+	}
+}

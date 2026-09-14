@@ -215,11 +215,32 @@ func RepairUnitIdentity(ctx context.Context, pool *pgxpool.Pool, officers []SIPP
 		}
 	}
 
-	// 4. Unit sekolah yatim: baris lama hasil bentrok nama yang tidak diklaim
-	//    unit SIPP ASN mana pun dan tidak punya pemakai -> lebur/hapus.
+	// 4. Unit sekolah sisa (tidak diklaim unit SIPP ASN mana pun). Bila ada unit
+	//    kanonik (ber-kd_unker) dengan nama + kecamatan sama persis, ia duplikat:
+	//    alihkan pemakainya lalu hapus. Bila tidak ada padanan pasti, hanya
+	//    dihapus jika tanpa pemakai; selain itu dibiarkan + dicatat.
+	canonical := map[string]*unitRow{}
+	for _, kd := range kds {
+		if u := target[kd]; u != nil {
+			canonical[unitKey(unitByKd[kd].UnitName, unitByKd[kd].UnitDistrict)] = u
+		}
+	}
 	for i := range all {
 		u := &all[i]
 		if !isSchoolUnitType(u.typ) || claimed[u.id] {
+			continue
+		}
+		if dup := canonical[unitKey(u.name, u.district)]; dup != nil && dup.id != u.id {
+			plan.Merged++
+			plan.Planned++
+			if execute {
+				if err := remapUnitReferences(ctx, tx, u.id, dup.id); err != nil {
+					return plan, err
+				}
+				if _, err := tx.Exec(ctx, `DELETE FROM units WHERE id=$1`, u.id); err != nil {
+					return plan, fmt.Errorf("hapus unit duplikat id %d: %w", u.id, err)
+				}
+			}
 			continue
 		}
 		if u.used > 0 {
@@ -271,6 +292,32 @@ func reparentSchoolsToKorwil(ctx context.Context, tx pgx.Tx) error {
 // legacyKey menggabungkan kode lama dengan kecamatan sebagai kunci pencocokan.
 func legacyKey(legacy, district string) string {
 	return legacy + "\x00" + district
+}
+
+// unitKey menormalkan (nama, kecamatan) sebagai kunci deteksi duplikat: nama
+// tanpa akhiran " - Dinas Pendidikan", huruf besar, hanya alfanumerik.
+func unitKey(name, district string) string {
+	n := strings.ToUpper(strings.TrimSpace(name))
+	if i := strings.Index(n, " - DINAS PENDIDIKAN"); i >= 0 {
+		n = n[:i]
+	}
+	n = sippASNLegacyUnitCode(n)
+	return n + "\x00" + strings.ToUpper(strings.TrimSpace(district))
+}
+
+// remapUnitReferences memindahkan seluruh tautan dari unit dup ke unit keep
+// (teachers, users, submissions) sebelum unit dup dihapus.
+func remapUnitReferences(ctx context.Context, tx pgx.Tx, dup, keep int64) error {
+	if _, err := tx.Exec(ctx, `UPDATE teachers SET unit_id=$2, updated_at=now() WHERE unit_id=$1`, dup, keep); err != nil {
+		return fmt.Errorf("alihkan teachers %d -> %d: %w", dup, keep, err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE users SET unit_id=$2, updated_at=now() WHERE unit_id=$1`, dup, keep); err != nil {
+		return fmt.Errorf("alihkan users %d -> %d: %w", dup, keep, err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE submissions SET proposed_unit_id=$2 WHERE proposed_unit_id=$1`, dup, keep); err != nil {
+		return fmt.Errorf("alihkan submissions %d -> %d: %w", dup, keep, err)
+	}
+	return nil
 }
 
 // betterUnit memilih baris yang lebih layak dijadikan target saat beberapa baris
