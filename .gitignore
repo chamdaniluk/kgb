@@ -129,6 +129,8 @@ tools/*.pdf
 src/tools/
 deploy/si-cendikia-server
 deploy/si-cendikia-server-*
+deploy/repairunits
+deploy/repairunits-*
 # Sisa uji manual di src/ (respons API, token CSRF, PDF/DOCX contoh)
 src/*.txt
 src/*.json
