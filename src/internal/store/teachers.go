@@ -143,7 +143,7 @@ func UpsertImportedTeacher(ctx context.Context, tx pgx.Tx, t ImportedTeacher, ha
 	var unitID int64
 	if err = tx.QueryRow(ctx, `
 		INSERT INTO units (code, name, type, district, parent_id, kd_unker) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''))
-		ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name, type=EXCLUDED.type, district=COALESCE(EXCLUDED.district, units.district), parent_id=EXCLUDED.parent_id, kd_unker=COALESCE(EXCLUDED.kd_unker, units.kd_unker), updated_at=now()
+		ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name, type=EXCLUDED.type, district=COALESCE(EXCLUDED.district, units.district), parent_id=CASE WHEN EXCLUDED.parent_id IS NULL THEN units.parent_id ELSE EXCLUDED.parent_id END, kd_unker=COALESCE(EXCLUDED.kd_unker, units.kd_unker), updated_at=now()
 		RETURNING id`, t.UnitCode, t.UnitName, t.UnitType, nullIfEmpty(t.UnitDistrict), parentID, t.KdUnker).Scan(&unitID); err != nil {
 		return false, fmt.Errorf("upsert unit: %w", err)
 	}
