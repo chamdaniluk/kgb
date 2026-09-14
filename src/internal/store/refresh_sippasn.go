@@ -51,9 +51,9 @@ func RefreshFromSIPPASN(ctx context.Context, pool *pgxpool.Pool, o SIPPASNOffice
 	defer tx.Rollback(ctx)
 	var unitID int64
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO units (code, name, type, district, parent_id) VALUES ($1,$2,$3,$4,$5)
-		ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name, type=EXCLUDED.type, district=COALESCE(EXCLUDED.district, units.district), parent_id=CASE WHEN EXCLUDED.parent_id IS NULL THEN units.parent_id ELSE EXCLUDED.parent_id END, updated_at=now()
-		RETURNING id`, mapped.UnitCode, mapped.UnitName, mapped.UnitType, nullIfEmpty(mapped.UnitDistrict), nil).Scan(&unitID); err != nil {
+		INSERT INTO units (code, name, type, district, parent_id, kd_unker) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''))
+		ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name, type=EXCLUDED.type, district=COALESCE(EXCLUDED.district, units.district), parent_id=CASE WHEN EXCLUDED.parent_id IS NULL THEN units.parent_id ELSE EXCLUDED.parent_id END, kd_unker=COALESCE(EXCLUDED.kd_unker, units.kd_unker), updated_at=now()
+		RETURNING id`, mapped.UnitCode, mapped.UnitName, mapped.UnitType, nullIfEmpty(mapped.UnitDistrict), nil, mapped.KdUnker).Scan(&unitID); err != nil {
 		return false, err
 	}
 	kategori := mapped.Kategori

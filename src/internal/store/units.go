@@ -33,7 +33,7 @@ func ValidateDistrict(district string) error {
 
 // ListUnits mengambil semua unit kerja beserta parent Korwil dan kecamatan bila ada.
 func ListUnits(ctx context.Context, pool *pgxpool.Pool) ([]Unit, error) {
-	rows, err := pool.Query(ctx, `SELECT u.id, u.code, u.name, u.type, COALESCE(u.district,''), u.parent_id, COALESCE(p.name,''), u.created_at, u.updated_at FROM units u LEFT JOIN units p ON p.id=u.parent_id ORDER BY u.name`)
+	rows, err := pool.Query(ctx, `SELECT u.id, u.code, u.name, u.type, COALESCE(u.district,''), COALESCE(u.kd_unker,''), u.parent_id, COALESCE(p.name,''), u.created_at, u.updated_at FROM units u LEFT JOIN units p ON p.id=u.parent_id ORDER BY u.name`)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func ListUnits(ctx context.Context, pool *pgxpool.Pool) ([]Unit, error) {
 	result := make([]Unit, 0)
 	for rows.Next() {
 		var u Unit
-		if err := rows.Scan(&u.ID, &u.Code, &u.Name, &u.Type, &u.District, &u.ParentID, &u.ParentName, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Code, &u.Name, &u.Type, &u.District, &u.KdUnker, &u.ParentID, &u.ParentName, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, u)

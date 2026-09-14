@@ -16,6 +16,7 @@ func TestMapSIPPASNOfficerGuruPNS(t *testing.T) {
 		JobTitle: "Guru Ahli Muda",
 		Golongan: "III/c",
 		Pangkat:  "Penata",
+		UnitCode: "03.10.31",
 		UnitName: "SDN 3 Krangganharjo - Dinas Pendidikan",
 		Status:   "1",
 	}
@@ -29,11 +30,108 @@ func TestMapSIPPASNOfficerGuruPNS(t *testing.T) {
 	if got.Jabatan != "Guru Ahli Muda" || got.Name != "GURU CONTOH, S.Pd." {
 		t.Fatalf("jabatan/nama = %q/%q", got.Jabatan, got.Name)
 	}
+	if got.UnitCode != "SDN-3-KRANGGANHARJO-03-10-31" {
+		t.Fatalf("kode unit = %q, want berbasis kd_unker SDN-3-KRANGGANHARJO-03-10-31", got.UnitCode)
+	}
+	if got.KdUnker != "03.10.31" {
+		t.Fatalf("kd_unker = %q, want 03.10.31", got.KdUnker)
+	}
+	if got.UnitDistrict != "GROBOGAN" || got.UnitType != "sd" {
+		t.Fatalf("district/tipe unit = %q/%q, want GROBOGAN/sd (dari kode 03.10)", got.UnitDistrict, got.UnitType)
+	}
 	if got.MasaKerjaSource != "sippasn" || got.MasaKerjaTahun <= 0 {
 		t.Fatalf("masa kerja = %d/%q, want >0/sippasn", got.MasaKerjaTahun, got.MasaKerjaSource)
 	}
 	if err := ValidateImportedTeacher(got); err != nil {
 		t.Fatalf("hasil map harus lolos validasi impor: %v", err)
+	}
+}
+
+// Dua sekolah bernama sama di kecamatan berbeda harus menghasilkan kode unit
+// berbeda (temuan 2026-09-14: SDN 1 Karanganyar berdiri di Purwodadi, Geyer,
+// dan Karangrayung; kode lama berbasis nama saja membuat 10 unit hilang).
+func TestMapSIPPASNOfficerSekolahNamaSamaBedaKode(t *testing.T) {
+	cfg := SIPPASNSyncConfig{HanyaUnitPendidikan: true, HanyaStatusAktif: true}
+	cases := []struct {
+		kdUnker, wantCode, wantDistrict string
+	}{
+		{"03.07.51", "SDN-1-KARANGANYAR-03-07-51", "PURWODADI"},
+		{"03.09.27", "SDN-1-KARANGANYAR-03-09-27", "GEYER"},
+		{"03.21.02", "SDN-1-KARANGANYAR-03-21-02", "KARANGRAYUNG"},
+	}
+	seen := map[string]bool{}
+	for i, c := range cases {
+		got, ok := MapSIPPASNOfficer(SIPPASNOfficer{
+			NIP:      "199103312005011076",
+			Name:     "GURU CONTOH, S.Pd.",
+			JobKind:  "2",
+			JobTitle: "Guru Ahli Muda",
+			Golongan: "III/c",
+			UnitCode: c.kdUnker,
+			UnitName: "SDN 1 Karanganyar - Dinas Pendidikan",
+			Status:   "1",
+		}, cfg)
+		if !ok {
+			t.Fatalf("kasus %d harus layak sinkron", i)
+		}
+		if got.UnitCode != c.wantCode {
+			t.Fatalf("kasus %d kode unit = %q, want %q", i, got.UnitCode, c.wantCode)
+		}
+		if got.UnitDistrict != c.wantDistrict {
+			t.Fatalf("kasus %d district = %q, want %q", i, got.UnitDistrict, c.wantDistrict)
+		}
+		if seen[got.UnitCode] {
+			t.Fatalf("kode unit %q duplikat antar kecamatan", got.UnitCode)
+		}
+		seen[got.UnitCode] = true
+	}
+}
+
+// Desa Tanggungharjo ada di Kecamatan Grobogan; kode 03.10.47 harus dipetakan
+// ke GROBOGAN, bukan TANGGUNGHARJO (temuan 2026-09-14).
+func TestMapSIPPASNOfficerTanggungharjoIkutKodeBukanNama(t *testing.T) {
+	got, ok := MapSIPPASNOfficer(SIPPASNOfficer{
+		NIP: "199103312005011076", Name: "GURU CONTOH, S.Pd.", JobKind: "2",
+		JobTitle: "Guru Ahli Muda", Golongan: "III/c",
+		UnitCode: "03.10.47", UnitName: "SDN 1 Tanggungharjo - Dinas Pendidikan", Status: "1",
+	}, SIPPASNSyncConfig{HanyaUnitPendidikan: true, HanyaStatusAktif: true})
+	if !ok {
+		t.Fatal("guru SDN 1 Tanggungharjo harus layak sinkron")
+	}
+	if got.UnitDistrict != "GROBOGAN" {
+		t.Fatalf("district = %q, want GROBOGAN (dari kode 03.10)", got.UnitDistrict)
+	}
+}
+
+// Nama TK juga berakhiran "- Dinas Pendidikan" sehingga dulu tertelan jadi unit
+// Dinas (19 TK salah tipe, temuan 2026-09-14). TK harus berjenis "tk" agar
+// usulannya diverifikasi Korwil kecamatan, bukan langsung Dinas.
+func TestMapSIPPASNOfficerTKBukanUnitDinas(t *testing.T) {
+	got, ok := MapSIPPASNOfficer(SIPPASNOfficer{
+		NIP: "199103312005011076", Name: "GURU TK CONTOH, S.Pd.", JobKind: "2",
+		JobTitle: "Guru Ahli Muda", Golongan: "III/c",
+		UnitCode: "03.07.01", UnitName: "TK Negeri Pembina - Dinas Pendidikan", Status: "1",
+	}, SIPPASNSyncConfig{HanyaUnitPendidikan: true, HanyaStatusAktif: true})
+	if !ok {
+		t.Fatal("guru TK harus layak sinkron")
+	}
+	if got.UnitType != "tk" {
+		t.Fatalf("tipe unit = %q, want tk (bukan dinas)", got.UnitType)
+	}
+	if got.UnitDistrict != "PURWODADI" {
+		t.Fatalf("district = %q, want PURWODADI (dari kode 03.07)", got.UnitDistrict)
+	}
+	// Unit internal Dinas sungguhan (mis. Bidang) harus tetap 'dinas'.
+	bidang, ok := MapSIPPASNOfficer(SIPPASNOfficer{
+		NIP: "199103312005011077", Name: "PEJABAT CONTOH", JobKind: "20",
+		JobTitle: "Kepala Bidang", Golongan: "IV/a",
+		UnitCode: "03.02", UnitName: "Bidang Pembinaan SD - Dinas Pendidikan", Status: "1",
+	}, SIPPASNSyncConfig{HanyaUnitPendidikan: true, HanyaStatusAktif: true})
+	if !ok {
+		t.Fatal("pejabat bidang harus layak sinkron")
+	}
+	if bidang.UnitType != "dinas" {
+		t.Fatalf("tipe Bidang = %q, want dinas", bidang.UnitType)
 	}
 }
 

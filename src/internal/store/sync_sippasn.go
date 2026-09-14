@@ -135,9 +135,7 @@ func MapSIPPASNOfficer(o SIPPASNOfficer, cfg SIPPASNSyncConfig) (ImportedTeacher
 	} else {
 		mkgSource = "belum_tersedia"
 	}
-	unitName := strings.TrimSpace(o.UnitName)
-	unitCode := sippASNUnitCode(unitName)
-	unitType := sippASNUnitType(unitName)
+	unitCode, unitName, unitType, unitDistrict, kdUnker := sippASNUnitInfo(o)
 	return ImportedTeacher{
 		NIP:             o.NIP,
 		Name:            strings.TrimSpace(o.Name),
@@ -146,7 +144,8 @@ func MapSIPPASNOfficer(o SIPPASNOfficer, cfg SIPPASNSyncConfig) (ImportedTeacher
 		UnitCode:        unitCode,
 		UnitName:        unitName,
 		UnitType:        unitType,
-		UnitDistrict:    sippASNDistrict(unitName, unitType),
+		UnitDistrict:    unitDistrict,
+		KdUnker:         kdUnker,
 		PangkatGol:      golongan,
 		Pangkat:         strings.TrimSpace(o.Pangkat),
 		Jabatan:         strings.TrimSpace(o.JobTitle),
@@ -178,10 +177,69 @@ func fullYearsSince(from, asOf time.Time) int {
 	return years
 }
 
-// sippASNUnitCode menurunkan kode unit gaya SI CENDIKIA dari nama unit SIPP ASN
-// ("SDN 3 Krangganharjo - Dinas Pendidikan" -> "SDN-3-KRANGGANHARJO").
-// Nama mentah tetap disimpan sebagai UnitName agar tidak ada informasi hilang.
-func sippASNUnitCode(unitName string) string {
+// sippASNUnitInfo menurunkan identitas unit dari satu baris SIPP ASN:
+// kode unit, nama, tipe, kecamatan, dan kd_unker. Dipakai MapSIPPASNOfficer dan
+// perbaikan identitas unit agar keduanya memakai aturan yang sama persis.
+func sippASNUnitInfo(o SIPPASNOfficer) (code, name, unitType, district, kdUnker string) {
+	name = strings.TrimSpace(o.UnitName)
+	kdUnker = strings.TrimSpace(o.UnitCode)
+	unitType = sippASNUnitType(name)
+	code = sippASNUnitCode(name, unitType, kdUnker)
+	district = sippASNDistrict(name, unitType, kdUnker)
+	return code, name, unitType, district, kdUnker
+}
+
+// sippASNUnitCode menurunkan kode unit gaya SI CENDIKIA dari nama unit SIPP ASN.
+// Satuan pendidikan (sd/tk/smp/skb) mendapat akhiran kd_unker yang unik, sehingga
+// sekolah bernama sama di kecamatan berbeda tidak lagi saling menimpa:
+// "SDN 1 Karanganyar" (kd_unker 03.21.02) -> "SDN-1-KARANGANYAR-03-21-02".
+// Unit Korwil/Dinas tetap memakai kode berbasis nama karena namanya sudah memuat
+// kecamatan/bidang sehingga tidak pernah bentrok.
+func sippASNUnitCode(unitName, unitType, kdUnker string) string {
+	code := sippASNLegacyUnitCode(unitName)
+	if kdUnker == "" || !isSchoolUnitType(unitType) {
+		return code
+	}
+	suffix := dashifyKdUnker(kdUnker)
+	if suffix == "" {
+		return code
+	}
+	return code + "-" + suffix
+}
+
+// isSchoolUnitType menandai unit yang mewakili satu satuan pendidikan sehingga
+// kd_unker-nya dipakai sebagai akhiran kode.
+func isSchoolUnitType(unitType string) bool {
+	switch unitType {
+	case "sd", "tk", "smp", "skb":
+		return true
+	}
+	return false
+}
+
+// dashifyKdUnker mengubah kd_unker "03.21.02" menjadi "03-21-02" agar aman
+// dipakai sebagai bagian kode unit.
+func dashifyKdUnker(kdUnker string) string {
+	var out strings.Builder
+	prevDash := false
+	for _, r := range strings.TrimSpace(kdUnker) {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+			out.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash && out.Len() > 0 {
+				out.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	return strings.Trim(out.String(), "-")
+}
+
+// sippASNLegacyUnitCode adalah kode lama (berbasis nama saja) yang masih dipakai
+// untuk mencocokkan unit lama saat perbaikan identitas, sebelum kd_unker ada.
+func sippASNLegacyUnitCode(unitName string) string {
 	name := unitName
 	if i := strings.Index(name, " - "); i >= 0 {
 		name = name[:i]
@@ -214,7 +272,7 @@ func sippASNUnitCode(unitName string) string {
 
 // sippASNUnitType menebak tipe unit SI CENDIKIA dari nama unit SIPP ASN.
 func sippASNUnitType(unitName string) string {
-	upper := strings.ToUpper(unitName)
+	upper := strings.ToUpper(strings.TrimSpace(unitName))
 	switch {
 	case strings.Contains(upper, "KOORDINATOR WILAYAH"):
 		return "korwil"
@@ -222,15 +280,16 @@ func sippASNUnitType(unitName string) string {
 	// "DINAS PENDIDIKAN" agar tidak tertelan klasifikasi unit internal Dinas.
 	case strings.Contains(upper, "SKB") || strings.Contains(upper, "SPNF") || strings.Contains(upper, "SANGGAR KEGIATAN BELAJAR"):
 		return "skb"
+	// TK juga perlu dicek sebelum "DINAS PENDIDIKAN": nama TK berakhiran
+	// "- Dinas Pendidikan" sehingga tanpa cabang ini 19 TK ikut tertelan jadi
+	// unit Dinas dan usulannya salah masuk antrean Dinas, bukan Korwil.
+	// Semua TK SIPP ASN berawalan "TK "/"TAMAN KANAK" (probe 2026-09-14).
+	case strings.HasPrefix(upper, "TK ") || strings.HasPrefix(upper, "TAMAN KANAK"):
+		return "tk"
 	case strings.Contains(upper, "DINAS PENDIDIKAN") && !strings.Contains(upper, "SDN ") && !strings.Contains(upper, "SMP"):
-		if strings.HasPrefix(strings.TrimSpace(upper), "DINAS PENDIDIKAN") {
-			return "dinas"
-		}
 		return "dinas"
 	case strings.Contains(upper, "SMP"):
 		return "smp"
-	case strings.Contains(upper, "TK "):
-		return "tk"
 	default:
 		return "sd"
 	}
@@ -245,15 +304,63 @@ var sippASNDistricts = []string{
 	"TEGOWANU", "TOROH", "WIROSARI",
 }
 
-// sippASNDistrict menebak kecamatan unit dari nama SIPP ASN. Unit internal
-// Dinas memakai "DINAS"; sekolah memakai nama kecamatan yang muncul di nama
-// unit; Korwil memakai kecamatannya sendiri. SKB/SPNF lokasinya di Kec.
-// Purwodadi (bukan "DINAS") meski namanya mengandung "Dinas Pendidikan".
-func sippASNDistrict(unitName, unitType string) string {
-	upper := strings.ToUpper(strings.TrimSpace(unitName))
+// sippASNKecamatanKode memetakan kode kecamatan Dinas Pendidikan pada kd_unker
+// (segmen "03.NN") ke nama kecamatan resmi. Diturunkan dari unit Korwil SIPP ASN
+// (probe 2026-09-14) dan dipakai sebagai sumber kecamatan yang pasti.
+var sippASNKecamatanKode = map[string]string{
+	"03.07": "PURWODADI",
+	"03.08": "TOROH",
+	"03.09": "GEYER",
+	"03.10": "GROBOGAN",
+	"03.11": "BRATI",
+	"03.12": "KLAMBU",
+	"03.13": "WIROSARI",
+	"03.14": "TAWANGHARJO",
+	"03.15": "NGARINGAN",
+	"03.16": "KRADENAN",
+	"03.17": "GABUS",
+	"03.18": "PULOKULON",
+	"03.19": "GODONG",
+	"03.20": "PENAWANGAN",
+	"03.21": "KARANGRAYUNG",
+	"03.22": "GUBUG",
+	"03.23": "KEDUNGJATI",
+	"03.24": "TEGOWANU",
+	"03.25": "TANGGUNGHARJO",
+}
+
+// sippASNDistrict menentukan kecamatan unit. Bila kd_unker tersedia, kecamatan
+// dibaca dari kode (03.NN) sehingga sekolah bernama desa yang sama tidak lagi
+// salah kecamatan (mis. SDN 1-4 Tanggungharjo ber-kd_unker 03.10.x = Kec.
+// Grobogan, bukan Kec. Tanggungharjo). Bila kode tak ada, jatuh ke tebakan nama
+// (dipakai impor BKN manual). SKB berkedudukan di Kec. Purwodadi (migrasi 018).
+func sippASNDistrict(unitName, unitType, kdUnker string) string {
 	if unitType == "skb" {
 		return "PURWODADI"
 	}
+	if d := sippASNDistrictFromKode(kdUnker); d != "" {
+		return d
+	}
+	return sippASNDistrictFromName(unitName, unitType)
+}
+
+// sippASNDistrictFromKode memetakan kode kecamatan Dinas Pendidikan (segmen
+// kedua kd_unker, mis. "03.21" = Karangrayung) ke nama kecamatan resmi.
+func sippASNDistrictFromKode(kdUnker string) string {
+	parts := strings.Split(strings.TrimSpace(kdUnker), ".")
+	if len(parts) < 2 || parts[0] != "03" {
+		return ""
+	}
+	if name, ok := sippASNKecamatanKode[parts[0]+"."+parts[1]]; ok {
+		return name
+	}
+	return ""
+}
+
+// sippASNDistrictFromName adalah tebakan kecamatan dari nama unit (fallback
+// dipakai bila kd_unker tidak ada, mis. impor BKN manual).
+func sippASNDistrictFromName(unitName, unitType string) string {
+	upper := strings.ToUpper(strings.TrimSpace(unitName))
 	if unitType == "dinas" || unitType == "korwil" {
 		for _, d := range sippASNDistricts {
 			if strings.Contains(upper, d) {

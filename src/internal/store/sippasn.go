@@ -90,6 +90,13 @@ func (c SIPPASNClient) FetchOfficers(ctx context.Context) ([]SIPPASNOfficer, err
 	if err != nil {
 		return nil, fmt.Errorf("baca respons SIPP ASN: %w", err)
 	}
+	return ParseSIPPASNOfficers(raw)
+}
+
+// ParseSIPPASNOfficers mengurai payload /api/pegawai menjadi daftar pejabat.
+// Dipisah dari FetchOfficers agar perbaikan/audit dapat memakai snapshot
+// tersimpan (mode offline) tanpa jaringan.
+func ParseSIPPASNOfficers(raw []byte) ([]SIPPASNOfficer, error) {
 	raw = bytes.ReplaceAll(raw, []byte("\r"), []byte(" "))
 	raw = bytes.ReplaceAll(raw, []byte("\n"), []byte(" "))
 	raw = bytes.ReplaceAll(raw, []byte("\t"), []byte(" "))

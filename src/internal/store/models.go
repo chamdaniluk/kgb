@@ -318,6 +318,7 @@ type Unit struct {
 	Name       string    `json:"name"`
 	Type       string    `json:"type"`
 	District   string    `json:"district,omitempty"`
+	KdUnker    string    `json:"kd_unker,omitempty"`
 	ParentID   *int64    `json:"parent_id,omitempty"`
 	ParentName string    `json:"parent_name,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
@@ -401,6 +402,7 @@ type ImportedTeacher struct {
 	UnitName        string
 	UnitType        string
 	UnitDistrict    string
+	KdUnker         string // kode unit kerja SIPP ASN (unik); kosong untuk impor non-SIPP
 	ParentUnitCode  string
 	ParentUnitName  string
 	PangkatGol      string
