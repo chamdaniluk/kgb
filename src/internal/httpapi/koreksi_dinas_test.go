@@ -36,8 +36,15 @@ func seedAdminDinas(t *testing.T, fx fixture) (adminUser, verifUser string) {
 	return "admin.disdik1", "verif.dinas"
 }
 
-// koreksiReq mengirim form koreksi dengan override field tertentu.
+// koreksiReq mengirim form koreksi Dinas dengan override field tertentu.
 func koreksiReq(t *testing.T, fx fixture, subID int64, username, password string, override map[string]string) (*http.Response, map[string]any) {
+	t.Helper()
+	return koreksiFormReq(t, fx, fmt.Sprintf("/api/v1/verifications/dinas/%d/koreksi", subID), username, password, override)
+}
+
+// koreksiFormReq mengirim form koreksi (field sama dengan form usulan) ke path
+// mana pun, dipakai bersama oleh jalur Dinas dan jalur unit.
+func koreksiFormReq(t *testing.T, fx fixture, path, username, password string, override map[string]string) (*http.Response, map[string]any) {
 	t.Helper()
 	client, csrf := loginClient(t, fx.srv.URL, username, password)
 	fields := map[string]string{
@@ -74,8 +81,7 @@ func koreksiReq(t *testing.T, fx fixture, subID int64, username, password string
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	req, err := http.NewRequest(http.MethodPost,
-		fx.srv.URL+fmt.Sprintf("/api/v1/verifications/dinas/%d/koreksi", subID), &body)
+	req, err := http.NewRequest(http.MethodPost, fx.srv.URL+path, &body)
 	if err != nil {
 		t.Fatal(err)
 	}

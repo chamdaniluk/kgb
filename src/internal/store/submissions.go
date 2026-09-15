@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -473,13 +474,51 @@ func Resubmit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, propos
 	return GetSubmission(ctx, pool, id)
 }
 
+// Status yang membolehkan koreksi petugas. Dinas mengoreksi usulan yang sedang
+// diantrekan padanya; unit mengoreksi usulannya sendiri selagi belum diteruskan
+// ke pimpinan — menunggu_unit (masih di antrean unit) maupun menunggu_dinas
+// (sudah diteruskan, tetapi nomor surat belum tercadangkan).
+var (
+	KoreksiStatusDinas = []string{"menunggu_dinas"}
+	KoreksiStatusUnit  = []string{"menunggu_unit", "menunggu_dinas"}
+)
+
+// KoreksiParams membawa nilai naskah hasil perbaikan petugas. Field-nya sengaja
+// sama dengan form usulan supaya satu mesin hitung (prepareKGBFromForm di
+// handler) tetap menjadi satu-satunya sumber nilai gaji dan masa kerja.
+type KoreksiParams struct {
+	ProposedTMT        time.Time
+	ProposedMasaKerja  *int
+	ProposedTMTKGBLast *time.Time
+	TMTAwal            *time.Time
+	Change             TeacherChange
+	Draft              LetterDraft
+	CurrentSalary      string
+	NextSalary         string
+	Files              SubmissionFiles
+	Note               string
+	IP                 string
+}
+
 // KoreksiDinas memperbaiki data pengajuan pada tahap menunggu_dinas, sebelum
 // usulan diteruskan ke pimpinan untuk TTE (keputusan owner 2026-09-11).
-// Status TIDAK berubah — usulan tetap di antrean Dinas — dan berkas tidak
-// diganti di sini (berkas keliru tetap lewat mekanisme tolak-kembali).
-// Seluruh perbedaan nilai sebelum dan sesudah dicatat ke audit beserta catatan
-// koreksi dari petugas.
-func KoreksiDinas(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, proposedTMT time.Time, proposedMasaKerja *int, proposedTMTKGBLast, tmtAwal *time.Time, change TeacherChange, draft LetterDraft, currentSalary, nextSalary string, files SubmissionFiles, note, ip string) (Submission, error) {
+func KoreksiDinas(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, p KoreksiParams) (Submission, error) {
+	return koreksiSubmission(ctx, pool, id, actorID, KoreksiStatusDinas, "koreksi_dinas", p)
+}
+
+// KoreksiUnit memperbaiki data pengajuan oleh verifikator unit (Korwil/SMP/SKB)
+// untuk usulan dalam scope unitnya (keputusan owner 2026-09-15).
+func KoreksiUnit(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, p KoreksiParams) (Submission, error) {
+	return koreksiSubmission(ctx, pool, id, actorID, KoreksiStatusUnit, "koreksi_unit", p)
+}
+
+// koreksiSubmission menulis perbaikan data petugas. Status TIDAK berubah —
+// usulan tetap di antrean petugas — dan berkas tidak diganti di sini (berkas
+// keliru tetap lewat mekanisme tolak-kembali). Status diperiksa ulang di dalam
+// transaksi dengan baris terkunci, sehingga keputusan paralel (petugas lain
+// meneruskan usulan) tidak bisa tertimpa. Seluruh perbedaan nilai sebelum dan
+// sesudah dicatat ke audit beserta catatan koreksi.
+func koreksiSubmission(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, allowed []string, action string, p KoreksiParams) (Submission, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return Submission{}, err
@@ -493,27 +532,27 @@ func KoreksiDinas(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, pr
 	if err != nil {
 		return Submission{}, err
 	}
-	if old.Status != "menunggu_dinas" {
+	if !slices.Contains(allowed, old.Status) {
 		return Submission{}, ErrConflict
 	}
 	before := koreksiSnapshot(old, old.ProposedTMT, old.ProposedPangkatGol, old.CurrentSalary, old.NextSalary)
 	if err := applyDraftUpdate(ctx, tx, id, draftUpdate{
 		Status:             old.Status,
-		ProposedTMT:        proposedTMT,
-		ProposedMasaKerja:  proposedMasaKerja,
-		ProposedTMTKGBLast: proposedTMTKGBLast,
-		Change:             change,
-		Draft:              draft,
-		CurrentSalary:      currentSalary,
-		NextSalary:         nextSalary,
-		Files:              files,
-		TMTAwal:            tmtAwal,
+		ProposedTMT:        p.ProposedTMT,
+		ProposedMasaKerja:  p.ProposedMasaKerja,
+		ProposedTMTKGBLast: p.ProposedTMTKGBLast,
+		Change:             p.Change,
+		Draft:              p.Draft,
+		CurrentSalary:      p.CurrentSalary,
+		NextSalary:         p.NextSalary,
+		Files:              p.Files,
+		TMTAwal:            p.TMTAwal,
 		BumpSubmittedAt:    false,
 		ClearRejectionNote: false,
 	}); err != nil {
 		return Submission{}, err
 	}
-	after := koreksiSnapshot(old, proposedTMT, change.PangkatGol, currentSalary, nextSalary)
+	after := koreksiSnapshot(old, p.ProposedTMT, p.Change.PangkatGol, p.CurrentSalary, p.NextSalary)
 	changed := make([]string, 0, len(before))
 	for k, v := range before {
 		if fmt.Sprint(after[k]) != fmt.Sprint(v) {
@@ -523,16 +562,16 @@ func KoreksiDinas(ctx context.Context, pool *pgxpool.Pool, id, actorID int64, pr
 	sort.Strings(changed)
 	detailsMap := map[string]any{
 		"status":  old.Status,
-		"note":    note,
+		"note":    p.Note,
 		"sebelum": before,
 		"sesudah": after,
 		"diubah":  changed,
 	}
-	if len(change.AuditDetails) > 0 {
-		detailsMap["perubahan_data"] = change.AuditDetails
+	if len(p.Change.AuditDetails) > 0 {
+		detailsMap["perubahan_data"] = p.Change.AuditDetails
 	}
 	details, _ := json.Marshal(detailsMap)
-	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs (actor_user_id, submission_id, action, details, ip) VALUES ($1, $2, 'koreksi_dinas', $3, $4)`, actorID, id, details, ip); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs (actor_user_id, submission_id, action, details, ip) VALUES ($1, $2, $3, $4, $5)`, actorID, id, action, details, p.IP); err != nil {
 		return Submission{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

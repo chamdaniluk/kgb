@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1269,33 +1270,60 @@ func (s *Server) handleDinasReject(w http.ResponseWriter, r *http.Request) {
 // 2026-09-11: kolom penentu gaji wajib beralasan, bukan sekadar dicentang.
 const koreksiNoteMin = 10
 
+// koreksiConfig membedakan jalur koreksi Dinas dari jalur koreksi unit
+// (Korwil/SMP/SKB). Selain status yang boleh dikoreksi, keduanya berperilaku
+// sama: form usulan yang sama, mesin hitung yang sama, dan berkas tidak diganti.
+type koreksiConfig struct {
+	// unitScoped memilih jalur penyimpanan unit (Korwil/SMP/SKB) yang memeriksa
+	// scope unit; bila false, penyimpanan lewat jalur Dinas.
+	unitScoped      bool
+	allowedStatuses []string
+	conflictMessage string
+}
+
 // handleDinasKoreksi memperbaiki data usulan pada tahap menunggu_dinas sebelum
 // diteruskan ke pimpinan untuk TTE (keputusan owner 2026-09-11).
+func (s *Server) handleDinasKoreksi(w http.ResponseWriter, r *http.Request) {
+	sub, ok := s.reviewDetail(w, r, "verifikator_dinas")
+	if !ok {
+		return
+	}
+	s.koreksiData(w, r, koreksiConfig{
+		allowedStatuses: store.KoreksiStatusDinas,
+		conflictMessage: "Koreksi hanya tersedia sebelum usulan diteruskan ke pimpinan (status menunggu Dinas).",
+	}, sub)
+}
+
+// handleUnitKoreksi memperbaiki data usulan oleh verifikator unit
+// (Korwil/SMP/SKB) pada usulan dalam scope unitnya (keputusan owner 2026-09-15).
+// Tahap yang boleh dikoreksi adalah menunggu_unit (masih di antrean unit) dan
+// menunggu_dinas (sudah diteruskan, tetapi belum diteruskan ke pimpinan/TTE).
+func (s *Server) handleUnitKoreksi(w http.ResponseWriter, r *http.Request) {
+	sub, ok := s.reviewDetail(w, r, "verifikator_unit")
+	if !ok {
+		return
+	}
+	s.koreksiData(w, r, koreksiConfig{
+		unitScoped:      true,
+		allowedStatuses: store.KoreksiStatusUnit,
+		conflictMessage: "Koreksi unit hanya tersedia selama usulan belum diteruskan ke pimpinan (menunggu Unit atau menunggu Dinas).",
+	}, sub)
+}
+
+// koreksiData menyimpan perbaikan data petugas dari form usulan.
 //
 // Form menerima field yang SAMA dengan form usulan sehingga memakai ulang
 // prepareKGBFromForm: gaji, masa kerja naskah, dan TMT tetap dihitung oleh satu
 // mesin yang sama. Berkas tidak diganti di sini — berkas keliru tetap lewat
 // mekanisme tolak-kembali. Kolom yang mengubah gaji/TMT wajib disertai catatan.
-func (s *Server) handleDinasKoreksi(w http.ResponseWriter, r *http.Request) {
+func (s *Server) koreksiData(w http.ResponseWriter, r *http.Request, cfg koreksiConfig, sub store.Submission) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxMultipartMemory+1<<20)
-	id, err := parsePathID(r, "id")
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "INVALID_ID", "ID pengajuan tidak valid.")
-		return
-	}
 	if err := r.ParseMultipartForm(maxMultipartMemory); err != nil {
 		writeErr(w, http.StatusBadRequest, "INVALID_FORM", "Form koreksi tidak valid.")
 		return
 	}
-	sub, err := store.GetSubmission(r.Context(), s.Pool, id)
-	if err != nil {
-		if !mapStoreError(w, err) {
-			writeErr(w, http.StatusInternalServerError, "INTERNAL", "Gagal mengambil pengajuan.")
-		}
-		return
-	}
-	if sub.Status != "menunggu_dinas" {
-		writeErr(w, http.StatusConflict, "INVALID_STATUS_TRANSITION", "Koreksi hanya tersedia sebelum usulan diteruskan ke pimpinan (status menunggu Dinas).")
+	if !slices.Contains(cfg.allowedStatuses, sub.Status) {
+		writeErr(w, http.StatusConflict, "INVALID_STATUS_TRANSITION", cfg.conflictMessage)
 		return
 	}
 	t, err := store.GetTeacherByID(r.Context(), s.Pool, sub.TeacherID)
@@ -1346,8 +1374,23 @@ func (s *Server) handleDinasKoreksi(w http.ResponseWriter, r *http.Request) {
 			cg.UnitID = &uid
 		}
 	}
-	updated, err := store.KoreksiDinas(r.Context(), s.Pool, id, userFrom(r).ID, prep.ProposedTMT, &prep.MasaBaru,
-		prep.LastTMT, prep.TMTAwal, cg, prep.Draft, prep.Current, prep.Next, files, note, clientIP(r))
+	koreksi := store.KoreksiDinas
+	if cfg.unitScoped {
+		koreksi = store.KoreksiUnit
+	}
+	updated, err := koreksi(r.Context(), s.Pool, sub.ID, userFrom(r).ID, store.KoreksiParams{
+		ProposedTMT:        prep.ProposedTMT,
+		ProposedMasaKerja:  &prep.MasaBaru,
+		ProposedTMTKGBLast: prep.LastTMT,
+		TMTAwal:            prep.TMTAwal,
+		Change:             cg,
+		Draft:              prep.Draft,
+		CurrentSalary:      prep.Current,
+		NextSalary:         prep.Next,
+		Files:              files,
+		Note:               note,
+		IP:                 clientIP(r),
+	})
 	if err != nil {
 		if mapStoreError(w, err) {
 			return

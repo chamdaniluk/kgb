@@ -100,6 +100,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/verifications/unit/{id}", s.withAuth("verifikator_unit")(s.handleUnitDetail))
 	mux.HandleFunc("POST /api/v1/verifications/unit/{id}/approve", s.withAuth("verifikator_unit")(s.handleUnitApprove))
 	mux.HandleFunc("POST /api/v1/verifications/unit/{id}/reject", s.withAuth("verifikator_unit")(s.handleUnitReject))
+	// Koreksi data unit (Korwil/SMP/SKB) selagi usulan belum diteruskan ke pimpinan.
+	mux.HandleFunc("POST /api/v1/verifications/unit/{id}/koreksi", s.withAuth("verifikator_unit")(s.handleUnitKoreksi))
 	mux.HandleFunc("GET /api/v1/verifications/dinas", s.withAuth("verifikator_dinas", "admin_dinas")(s.handleDinasQueue))
 	mux.HandleFunc("GET /api/v1/verifications/dinas/{id}", s.withAuth("verifikator_dinas", "admin_dinas")(s.handleDinasDetail))
 	mux.HandleFunc("POST /api/v1/verifications/dinas/{id}/approve", s.withAuth("verifikator_dinas", "admin_dinas")(s.handleDinasApprove))
