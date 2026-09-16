@@ -535,7 +535,7 @@ func koreksiSubmission(ctx context.Context, pool *pgxpool.Pool, id, actorID int6
 	if !slices.Contains(allowed, old.Status) {
 		return Submission{}, ErrConflict
 	}
-	before := koreksiSnapshot(old, old.ProposedTMT, old.ProposedPangkatGol, old.CurrentSalary, old.NextSalary)
+	before := koreksiSnapshot(old)
 	if err := applyDraftUpdate(ctx, tx, id, draftUpdate{
 		Status:             old.Status,
 		ProposedTMT:        p.ProposedTMT,
@@ -552,7 +552,15 @@ func koreksiSubmission(ctx context.Context, pool *pgxpool.Pool, id, actorID int6
 	}); err != nil {
 		return Submission{}, err
 	}
-	after := koreksiSnapshot(old, p.ProposedTMT, p.Change.PangkatGol, p.CurrentSalary, p.NextSalary)
+	// "Sesudah" harus dibaca dari baris yang SUDAH tersimpan, bukan dari baris
+	// lama yang ditimpa beberapa field saja: kolom naskah (karpeg, tempat lahir,
+	// tanggal SK, dan seterusnya) diisi oleh draft, sehingga menyalin baris lama
+	// akan melaporkan nilai sebelum sebagai sesudah dan menyembunyikan perubahan.
+	fresh, err := scanSubmission(tx.QueryRow(ctx, submissionSelect+` WHERE s.id=$1`, id))
+	if err != nil {
+		return Submission{}, fmt.Errorf("baca ulang pengajuan setelah koreksi: %w", err)
+	}
+	after := koreksiSnapshot(fresh)
 	changed := make([]string, 0, len(before))
 	for k, v := range before {
 		if fmt.Sprint(after[k]) != fmt.Sprint(v) {
@@ -580,9 +588,9 @@ func koreksiSubmission(ctx context.Context, pool *pgxpool.Pool, id, actorID int6
 	return GetSubmission(ctx, pool, id)
 }
 
-// koreksiSnapshot merangkum nilai naskah yang dicetak dan nilai gaji, dipakai
-// untuk mencatat perbedaan sebelum/sesudah koreksi.
-func koreksiSnapshot(s Submission, tmt time.Time, golongan *string, current, next string) map[string]string {
+// koreksiSnapshot merangkum nilai naskah yang dicetak dan nilai gaji dari SATU
+// baris pengajuan, dipakai untuk mencatat perbedaan sebelum/sesudah koreksi.
+func koreksiSnapshot(s Submission) map[string]string {
 	d := s.LetterDraftValues()
 	ptr := func(v *int) string {
 		if v == nil {
@@ -597,10 +605,10 @@ func koreksiSnapshot(s Submission, tmt time.Time, golongan *string, current, nex
 		return v.Format("2006-01-02")
 	}
 	return map[string]string{
-		"proposed_tmt":        tmt.Format("2006-01-02"),
-		"pangkat_gol":         derefString(golongan),
-		"current_salary":      current,
-		"next_salary":         next,
+		"proposed_tmt":        s.ProposedTMT.Format("2006-01-02"),
+		"pangkat_gol":         derefString(s.ProposedPangkatGol),
+		"current_salary":      s.CurrentSalary,
+		"next_salary":         s.NextSalary,
 		"birth_place":         d.BirthPlace,
 		"birth_date":          dateStr(d.BirthDate),
 		"karpeg":              d.Karpeg,

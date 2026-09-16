@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/http"
+	"slices"
 	"testing"
 
 	"sicendikia/internal/auth"
@@ -135,6 +136,46 @@ func TestKoreksiDinasUbahIdentitas(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("audit koreksi_dinas = %d, ingin 1", n)
+	}
+	// Invarian audit: daftar "diubah" harus PERSIS sama dengan himpunan kolom
+	// yang nilai sebelum dan sesudahnya berbeda. Regresi yang dijaga: "sesudah"
+	// pernah dibangun dari baris lama sehingga kolom yang tidak berubah ikut
+	// dilaporkan berubah, dan perubahan naskah dilaporkan kosong.
+	var detailsRaw string
+	if err := fx.pool.QueryRow(context.Background(),
+		`SELECT details::text FROM audit_logs WHERE submission_id=$1 AND action='koreksi_dinas'`, subID).Scan(&detailsRaw); err != nil {
+		t.Fatal(err)
+	}
+	var details struct {
+		Sebelum map[string]string
+		Sesudah map[string]string
+		Diubah  []string
+	}
+	if err := json.Unmarshal([]byte(detailsRaw), &details); err != nil {
+		t.Fatalf("details audit tidak terbaca: %v", err)
+	}
+	want := map[string]bool{"karpeg": true, "birth_place": true}
+	for k, before := range details.Sebelum {
+		changed := details.Sesudah[k] != before
+		listed := slices.Contains(details.Diubah, k)
+		if changed != listed {
+			t.Fatalf("kolom %q: berubah=%v tetapi dilaporkan=%v (diubah=%v)", k, changed, listed, details.Diubah)
+		}
+	}
+	for k := range want {
+		if !slices.Contains(details.Diubah, k) {
+			t.Fatalf("kolom %q seharusnya dilaporkan berubah, diubah=%v", k, details.Diubah)
+		}
+	}
+	// Kolom yang tidak disentuh koreksi identitas tidak boleh muncul.
+	for _, k := range []string{"current_salary", "next_salary", "proposed_tmt"} {
+		if slices.Contains(details.Diubah, k) {
+			t.Fatalf("kolom %q tidak berubah tetapi dilaporkan berubah: %v", k, details.Diubah)
+		}
+	}
+	if details.Sebelum["karpeg"] != "K 1" || details.Sesudah["karpeg"] != "I 999999" {
+		t.Fatalf("sebelum/sesudah karpeg = %q/%q, ingin 'K 1'/'I 999999'",
+			details.Sebelum["karpeg"], details.Sesudah["karpeg"])
 	}
 }
 
