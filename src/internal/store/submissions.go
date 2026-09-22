@@ -25,6 +25,7 @@ SELECT s.id, s.teacher_id, s.status, s.proposed_tmt,
        COALESCE(s.current_salary::text, ''), COALESCE(s.next_salary::text, ''),
        COALESCE(s.file_name, ''), COALESCE(s.file_path, ''), COALESCE(s.file_size, 0),
        COALESCE(s.file_kp_name, ''), COALESCE(s.file_kp_path, ''), COALESCE(s.file_kp_size, 0),
+       COALESCE(s.file_pk_name, ''), COALESCE(s.file_pk_path, ''), COALESCE(s.file_pk_size, 0),
        COALESCE(s.file_kgb_name, ''), COALESCE(s.file_kgb_path, ''), COALESCE(s.file_kgb_size, 0),
        COALESCE(s.file_skp_name, ''), COALESCE(s.file_skp_path, ''), COALESCE(s.file_skp_size, 0),
        COALESCE(s.rejection_note, ''), s.submitted_at, s.created_at, s.updated_at,
@@ -71,6 +72,7 @@ func scanSubmission(row pgx.Row) (Submission, error) {
 		&s.ProposedUnitID, &s.ProposedUnitName, &s.ProposedEffectiveDate, &s.ProposedChangeNote,
 		&s.CurrentSalary, &s.NextSalary, &s.FileName, &s.FilePath, &s.FileSize,
 		&s.FileKPName, &s.FileKPPath, &s.FileKPSize,
+		&s.FilePKName, &s.FilePKPath, &s.FilePKSize,
 		&s.FileKGBName, &s.FileKGBPath, &s.FileKGBSize,
 		&s.FileSKPName, &s.FileSKPPath, &s.FileSKPSize,
 		&s.RejectionNote, &s.SubmittedAt, &s.CreatedAt, &s.UpdatedAt,
@@ -291,6 +293,7 @@ func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorI
 			proposed_pangkat_gol, proposed_pangkat, proposed_jabatan, proposed_unit_id, proposed_effective_date, proposed_change_note,
 			current_salary, next_salary, file_name, file_path, file_size,
 			file_kp_name, file_kp_path, file_kp_size,
+			file_pk_name, file_pk_path, file_pk_size,
 			file_kgb_name, file_kgb_path, file_kgb_size,
 			file_skp_name, file_skp_path, file_skp_size, submitted_at,
 			draft_birth_place, draft_birth_date, draft_karpeg, draft_pangkat, draft_jabatan,
@@ -301,12 +304,13 @@ func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorI
 			draft_mkg_lama_tahun, draft_mkg_lama_bulan, draft_mkg_baru_tahun, draft_mkg_baru_bulan,
 			draft_masa_perjanjian, draft_perpanjangan_kontrak, tmt_awal)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-			$17, $18, $19, $20, $21, $22, $23, $24, $25, now(),
-			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50) RETURNING id`,
+			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, now(),
+			$29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53) RETURNING id`,
 		teacherID, initialStatus, proposedTMT, proposedMasaKerja, proposedTMTKGBLast, change.PangkatGol, change.Pangkat, change.Jabatan,
 		change.UnitID, change.EffectiveDate, nullIfEmpty(change.Note), currentSalary, nextSalary,
 		files.Main.Name, nullIfEmpty(files.Main.Path), files.Main.Size,
 		nullIfEmpty(files.KP.Name), nullIfEmpty(files.KP.Path), files.KP.Size,
+		nullIfEmpty(files.PK.Name), nullIfEmpty(files.PK.Path), files.PK.Size,
 		nullIfEmpty(files.KGB.Name), nullIfEmpty(files.KGB.Path), files.KGB.Size,
 		nullIfEmpty(files.SKP.Name), nullIfEmpty(files.SKP.Path), files.SKP.Size,
 		nullIfEmpty(draft.BirthPlace), draft.BirthDate, nullIfEmpty(draft.Karpeg), nullIfEmpty(draft.Pangkat), nullIfEmpty(draft.Jabatan),
@@ -378,22 +382,24 @@ func applyDraftUpdate(ctx context.Context, tx pgx.Tx, id int64, u draftUpdate) e
 		proposed_pangkat_gol=$5, proposed_pangkat=$6, proposed_jabatan=$7, proposed_unit_id=$8, proposed_effective_date=$9, proposed_change_note=$10,
 		current_salary=$11, next_salary=$12, file_name=$13, file_path=$14, file_size=$15,
 		file_kp_name=$16, file_kp_path=$17, file_kp_size=$18,
-		file_kgb_name=$19, file_kgb_path=$20, file_kgb_size=$21,
-		file_skp_name=$22, file_skp_path=$23, file_skp_size=$24,
-		draft_birth_place=$25, draft_birth_date=$26, draft_karpeg=$27, draft_pangkat=$28, draft_jabatan=$29,
-		draft_last_sk_pejabat=$30, draft_last_sk_tanggal=$31, draft_last_sk_nomor=$32, draft_last_sk_tmt=$33,
-		draft_last_sk_masa_tahun=$34, draft_last_sk_masa_bulan=$35,
-		draft_last_kp_golongan=$36, draft_last_kp_tmt=$37, draft_last_kp_nomor=$38, draft_last_kp_tanggal=$39, draft_last_kp_pejabat=$40,
-		draft_last_kp_masa_tahun=$41, draft_last_kp_masa_bulan=$42,
-		draft_mkg_lama_tahun=$43, draft_mkg_lama_bulan=$44, draft_mkg_baru_tahun=$45, draft_mkg_baru_bulan=$46,
-		draft_masa_perjanjian=$47, draft_perpanjangan_kontrak=$48, tmt_awal=$49,
-		submitted_at=CASE WHEN $51 THEN now() ELSE submitted_at END,
-		rejection_note=CASE WHEN $52 THEN NULL ELSE rejection_note END,
-		updated_at=now() WHERE id=$50`,
+		file_pk_name=$19, file_pk_path=$20, file_pk_size=$21,
+		file_kgb_name=$22, file_kgb_path=$23, file_kgb_size=$24,
+		file_skp_name=$25, file_skp_path=$26, file_skp_size=$27,
+		draft_birth_place=$28, draft_birth_date=$29, draft_karpeg=$30, draft_pangkat=$31, draft_jabatan=$32,
+		draft_last_sk_pejabat=$33, draft_last_sk_tanggal=$34, draft_last_sk_nomor=$35, draft_last_sk_tmt=$36,
+		draft_last_sk_masa_tahun=$37, draft_last_sk_masa_bulan=$38,
+		draft_last_kp_golongan=$39, draft_last_kp_tmt=$40, draft_last_kp_nomor=$41, draft_last_kp_tanggal=$42, draft_last_kp_pejabat=$43,
+		draft_last_kp_masa_tahun=$44, draft_last_kp_masa_bulan=$45,
+		draft_mkg_lama_tahun=$46, draft_mkg_lama_bulan=$47, draft_mkg_baru_tahun=$48, draft_mkg_baru_bulan=$49,
+		draft_masa_perjanjian=$50, draft_perpanjangan_kontrak=$51, tmt_awal=$52,
+		submitted_at=CASE WHEN $54 THEN now() ELSE submitted_at END,
+		rejection_note=CASE WHEN $55 THEN NULL ELSE rejection_note END,
+		updated_at=now() WHERE id=$53`,
 		u.Status, u.ProposedTMT, u.ProposedMasaKerja, u.ProposedTMTKGBLast, u.Change.PangkatGol, u.Change.Pangkat, u.Change.Jabatan, u.Change.UnitID, u.Change.EffectiveDate,
 		nullIfEmpty(u.Change.Note), u.CurrentSalary, u.NextSalary,
 		u.Files.Main.Name, nullIfEmpty(u.Files.Main.Path), u.Files.Main.Size,
 		nullIfEmpty(u.Files.KP.Name), nullIfEmpty(u.Files.KP.Path), u.Files.KP.Size,
+		nullIfEmpty(u.Files.PK.Name), nullIfEmpty(u.Files.PK.Path), u.Files.PK.Size,
 		nullIfEmpty(u.Files.KGB.Name), nullIfEmpty(u.Files.KGB.Path), u.Files.KGB.Size,
 		nullIfEmpty(u.Files.SKP.Name), nullIfEmpty(u.Files.SKP.Path), u.Files.SKP.Size,
 		nullIfEmpty(u.Draft.BirthPlace), u.Draft.BirthDate, nullIfEmpty(u.Draft.Karpeg), nullIfEmpty(u.Draft.Pangkat), nullIfEmpty(u.Draft.Jabatan),
@@ -681,8 +687,11 @@ func ValidateSubmissionDraft(s Submission) error {
 }
 
 // ValidateSubmissionFiles memeriksa kelengkapan slot berkas pendukung:
-// PNS wajib SK KP + KGB terakhir; PPPK wajib SK terakhir + SKP 2 tahun,
-// KGB terakhir opsional. Berkas utama lama dihitung sebagai pelengkap.
+// PNS wajib SK KP + KGB terakhir; PPPK wajib SK Pertama + SKP 2 tahun,
+// KGB terakhir opsional. Slot Perjanjian Kerja (pk) sengaja TIDAK diperiksa di
+// sini: kewajibannya dijaga di jalur unggah (saveSlotFiles) agar pengajuan
+// PPPK lama yang belum punya berkas itu tetap bisa di-ACC/di-TTE.
+// Berkas utama lama dihitung sebagai pelengkap.
 func ValidateSubmissionFiles(s Submission) error {
 	has := func(path string) bool { return path != "" }
 	missing := func(label string) error {
@@ -690,7 +699,7 @@ func ValidateSubmissionFiles(s Submission) error {
 	}
 	if s.ASNType == "pppk" {
 		if !has(s.FileKPPath) && !has(s.FilePath) {
-			return missing("SK terakhir")
+			return missing("SK Pertama")
 		}
 		if !has(s.FileSKPPath) {
 			return missing("SKP 2 tahun")

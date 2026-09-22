@@ -798,7 +798,7 @@ func (s *Server) handleCreateSubmission(w http.ResponseWriter, r *http.Request) 
 	}
 	sub, err := store.CreateSubmission(r.Context(), s.Pool, t.ID, userFrom(r).ID, prep.ProposedTMT, &effectiveMasaKerja, prep.LastTMT, prep.TMTAwal, cg, draft, prep.Current, prep.Next, store.SubmissionFiles{
 		Main: store.SubmissionFile{Name: mainName, Path: mainPath, Size: mainSize},
-		KP:   slotFiles.KP, KGB: slotFiles.KGB, SKP: slotFiles.SKP,
+		KP:   slotFiles.KP, PK: slotFiles.PK, KGB: slotFiles.KGB, SKP: slotFiles.SKP,
 	}, clientIP(r))
 	if err != nil {
 		if hasMain {
@@ -818,8 +818,9 @@ func filesMaxUploadSize() int64 { return files.MaxUploadSize }
 
 // saveSlotFiles menyimpan slot berkas pendukung sesuai jenis ASN.
 // PNS: file_kp (SK KP terakhir) + file_kgb (KGB terakhir), wajib.
-// PPPK: file_kp (SK terakhir) wajib + file_kgb (KGB terakhir) opsional +
-// file_skp (SKP 2 tahun) wajib. Tiap berkas PDF maksimal 5MB.
+// PPPK: file_kp (SK Pertama) + file_pk (Perjanjian Kerja/Perpanjangan
+// Kontrak) wajib + file_kgb (KGB terakhir) opsional + file_skp (SKP 2 tahun)
+// wajib. Tiap berkas PDF maksimal 5MB.
 // Mengembalikan false bila respons error sudah ditulis.
 func (s *Server) saveSlotFiles(w http.ResponseWriter, r *http.Request, asnType string) (store.SubmissionFiles, bool) {
 	var out store.SubmissionFiles
@@ -854,7 +855,11 @@ func (s *Server) saveSlotFiles(w http.ResponseWriter, r *http.Request, asnType s
 	}
 	var ok bool
 	if asnType == "pppk" {
-		if out.KP, ok = save("file_kp", "SK terakhir", true); !ok {
+		if out.KP, ok = save("file_kp", "SK Pertama", true); !ok {
+			s.removeSlotFiles(out)
+			return out, false
+		}
+		if out.PK, ok = save("file_pk", "Perjanjian Kerja/Perpanjangan Kontrak", true); !ok {
 			s.removeSlotFiles(out)
 			return out, false
 		}
@@ -947,11 +952,18 @@ func (s *Server) saveSlotFilesResubmit(w http.ResponseWriter, r *http.Request, a
 	}
 	needKGB := asnType != "pppk"
 	needSKP := asnType == "pppk"
+	needPK := asnType == "pppk"
 	var out store.SubmissionFiles
 	var ok bool
-	if out.KP, ok = save("file_kp", "SK terakhir"); !ok {
+	if out.KP, ok = save("file_kp", "SK Pertama"); !ok {
 		cleanup()
 		return out, nil, false
+	}
+	if needPK {
+		if out.PK, ok = save("file_pk", "Perjanjian Kerja/Perpanjangan Kontrak"); !ok {
+			cleanup()
+			return out, nil, false
+		}
 	}
 	if out.KGB, ok = save("file_kgb", "KGB terakhir"); !ok {
 		cleanup()
@@ -963,13 +975,22 @@ func (s *Server) saveSlotFilesResubmit(w http.ResponseWriter, r *http.Request, a
 			return out, nil, false
 		}
 	}
+	// Slot dianggap lengkap bila diunggah ulang sekarang atau sudah tersimpan
+	// di pengajuan lama (berkas utama skema lama hanya pelengkap SK KP/SK
+	// Pertama). Slot yang belum pernah ada tetap wajib diunggah.
 	missing := ""
 	switch {
-	case out.KP.Path == "" && old.FilePath == "":
-		missing = "SK KP terakhir"
+	case out.KP.Path == "" && old.FileKPPath == "" && old.FilePath == "":
+		if asnType == "pppk" {
+			missing = "SK Pertama"
+		} else {
+			missing = "SK KP terakhir"
+		}
+	case needPK && out.PK.Path == "" && old.FilePKPath == "":
+		missing = "Perjanjian Kerja/Perpanjangan Kontrak"
 	case needKGB && out.KGB.Path == "" && old.FileKGBPath == "":
 		missing = "KGB terakhir"
-	case needSKP && out.SKP.Path == "":
+	case needSKP && out.SKP.Path == "" && old.FileSKPPath == "":
 		missing = "SKP 2 tahun"
 	}
 	if missing != "" {
@@ -984,6 +1005,7 @@ func (s *Server) saveSlotFilesResubmit(w http.ResponseWriter, r *http.Request, a
 		return store.SubmissionFile{Name: name, Path: path, Size: int64(size)}
 	}
 	out.KP = keep(out.KP, old.FileKPName, old.FileKPSize, old.FileKPPath)
+	out.PK = keep(out.PK, old.FilePKName, old.FilePKSize, old.FilePKPath)
 	out.KGB = keep(out.KGB, old.FileKGBName, old.FileKGBSize, old.FileKGBPath)
 	out.SKP = keep(out.SKP, old.FileSKPName, old.FileSKPSize, old.FileSKPPath)
 	return out, fresh, true
@@ -993,7 +1015,7 @@ func (s *Server) removeSlotFiles(f store.SubmissionFiles) {
 	if s.Files == nil {
 		return
 	}
-	for _, slot := range []store.SubmissionFile{f.KP, f.KGB, f.SKP} {
+	for _, slot := range []store.SubmissionFile{f.KP, f.PK, f.KGB, f.SKP} {
 		if slot.Path != "" {
 			_ = s.Files.Remove(slot.Path)
 		}
@@ -1078,7 +1100,7 @@ func (s *Server) handleResubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	sub, err := store.Resubmit(r.Context(), s.Pool, id, userFrom(r).ID, prep.ProposedTMT, &effectiveMasaKerja, prep.LastTMT, prep.TMTAwal, cg2, draft, prep.Current, prep.Next, store.SubmissionFiles{
 		Main: store.SubmissionFile{Name: mainName, Path: mainPath, Size: mainSize},
-		KP:   slotFiles.KP, KGB: slotFiles.KGB, SKP: slotFiles.SKP,
+		KP:   slotFiles.KP, PK: slotFiles.PK, KGB: slotFiles.KGB, SKP: slotFiles.SKP,
 	}, clientIP(r))
 	if err != nil {
 		if hasMain {
@@ -1127,14 +1149,14 @@ func (s *Server) handleSubmissionFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "FORBIDDEN", "Berkas bukan dalam kewenangan Anda.")
 		return
 	}
-	// Slot unduhan: ?slot=kp|kgb|skp, default berkas utama (fallback slot KP
+	// Slot unduhan: ?slot=kp|pk|kgb|skp, default berkas utama (fallback slot KP
 	// untuk data lama yang hanya punya satu berkas).
 	slot := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("slot")))
-	path, name := sub.Slot(slot)
-	if slot != "" && slot != "kp" && slot != "kgb" && slot != "skp" {
-		writeErr(w, http.StatusBadRequest, "INVALID_SLOT", "Slot berkas tidak dikenal (kp, kgb, skp).")
+	if slot != "" && slot != "kp" && slot != "pk" && slot != "kgb" && slot != "skp" {
+		writeErr(w, http.StatusBadRequest, "INVALID_SLOT", "Slot berkas tidak dikenal (kp, pk, kgb, skp).")
 		return
 	}
+	path, name := sub.Slot(slot)
 	if path == "" || s.Files == nil {
 		writeErr(w, http.StatusNotFound, "FILE_NOT_FOUND", "Berkas tidak tersedia.")
 		return
@@ -1361,6 +1383,7 @@ func (s *Server) koreksiData(w http.ResponseWriter, r *http.Request, cfg koreksi
 	files := store.SubmissionFiles{
 		Main: store.SubmissionFile{Name: sub.FileName, Path: sub.FilePath, Size: int64(sub.FileSize)},
 		KP:   store.SubmissionFile{Name: sub.FileKPName, Path: sub.FileKPPath, Size: int64(sub.FileKPSize)},
+		PK:   store.SubmissionFile{Name: sub.FilePKName, Path: sub.FilePKPath, Size: int64(sub.FilePKSize)},
 		KGB:  store.SubmissionFile{Name: sub.FileKGBName, Path: sub.FileKGBPath, Size: int64(sub.FileKGBSize)},
 		SKP:  store.SubmissionFile{Name: sub.FileSKPName, Path: sub.FileSKPPath, Size: int64(sub.FileSKPSize)},
 	}

@@ -42,6 +42,7 @@ func TestSubmitPPPKDenganSKPertamaLolos(t *testing.T) {
 	}
 	for _, slot := range []struct{ field, name string }{
 		{"file_kp", "sk-pertama.pdf"},
+		{"file_pk", "perjanjian-kerja.pdf"},
 		{"file_skp", "skp.pdf"},
 	} {
 		p, err := writer.CreateFormFile(slot.field, slot.name)
@@ -72,6 +73,67 @@ func TestSubmitPPPKDenganSKPertamaLolos(t *testing.T) {
 	}
 	if env.Data["draft_last_kp_golongan"] != "IX" {
 		t.Fatalf("golongan SK Pertama tersimpan = %v, want IX", env.Data["draft_last_kp_golongan"])
+	}
+	if env.Data["file_pk_name"] != "perjanjian-kerja.pdf" {
+		t.Fatalf("berkas Perjanjian Kerja tersimpan = %v, want perjanjian-kerja.pdf", env.Data["file_pk_name"])
+	}
+}
+
+// Ralat tim Dinas 2026-09-22: berkas "Perjanjian Kerja/Perpanjangan Kontrak"
+// wajib pada pengajuan BARU PPPK — submit tanpa file_pk ditolak 422.
+func TestSubmitPPPKTanpaPerjanjianKerjaDitolak(t *testing.T) {
+	fx := newFixture(t)
+	client, csrf := loginClient(t, fx.srv.URL, nipPPPK, nipPPPK)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	fields := map[string]string{
+		"birth_place": "Grobogan", "birth_date": "1985-01-01", "karpeg": "-",
+		"jabatan": "Guru Ahli Pertama", "last_sk_pejabat": "KEPALA DINAS PENDIDIKAN",
+		"last_sk_tanggal": "2024-11-07", "last_sk_nomor": "800/421/4.2/2024",
+		"last_sk_tmt": "2024-12-01", "tmt_awal": "2021-01-01", "pangkat_gol": "IX",
+		"last_kgb_golongan": "IX", "last_kgb_masa_tahun": "4", "last_kgb_masa_bulan": "0",
+		"masa_perjanjian_kerja": "5 tahun", "perpanjangan_perjanjian_kerja": "2026-12-31",
+		"last_kp_golongan": "IX", "last_kp_tmt": "2021-01-01",
+		"last_kp_masa_tahun": "0", "last_kp_masa_bulan": "0",
+		"last_kp_nomor": "800/100/4.2/2021", "last_kp_tanggal": "2020-12-20",
+		"last_kp_pejabat": "KEPALA DINAS PENDIDIKAN",
+	}
+	for k, v := range fields {
+		_ = writer.WriteField(k, v)
+	}
+	// Sengaja tanpa file_pk; slot lain lengkap agar penolakan murni dari slot ini.
+	for _, slot := range []struct{ field, name string }{
+		{"file_kp", "sk-pertama.pdf"},
+		{"file_skp", "skp.pdf"},
+	} {
+		p, err := writer.CreateFormFile(slot.field, slot.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = p.Write([]byte("%PDF-1.4 test"))
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, fx.srv.URL+"/api/v1/submissions", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-CSRF-Token", csrf)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var env struct {
+		Error map[string]any `json:"error"`
+	}
+	_ = json.Unmarshal(raw, &env)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("submit PPPK tanpa Perjanjian Kerja: status=%d body=%v, want 422", resp.StatusCode, env.Error)
+	}
+	if !bytes.Contains(raw, []byte("Perjanjian Kerja")) {
+		t.Fatalf("pesan galat = %s, ingin menyebut 'Perjanjian Kerja'", raw)
 	}
 }
 

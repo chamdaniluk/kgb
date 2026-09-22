@@ -34,11 +34,15 @@ type Submission struct {
 	FilePath                 string         `json:"-"`
 	FileSize                 int            `json:"file_size"`
 	// Slot berkas pendukung per jenis ASN (017): PNS = SK KP + KGB terakhir
-	// (wajib); PPPK = SK terakhir (wajib) + KGB terakhir (opsional) + SKP
-	// 2 tahun (wajib). FilePath dirahasiakan; unduh via endpoint per slot.
+	// (wajib); PPPK = SK Pertama (wajib) + Perjanjian Kerja (pendukung) +
+	// KGB terakhir (opsional) + SKP 2 tahun (wajib). FilePath dirahasiakan;
+	// unduh via endpoint per slot.
 	FileKPName  string `json:"file_kp_name,omitempty"`
 	FileKPPath  string `json:"-"`
 	FileKPSize  int    `json:"file_kp_size,omitempty"`
+	FilePKName  string `json:"file_pk_name,omitempty"`
+	FilePKPath  string `json:"-"`
+	FilePKSize  int    `json:"file_pk_size,omitempty"`
 	FileKGBName string `json:"file_kgb_name,omitempty"`
 	FileKGBPath string `json:"-"`
 	FileKGBSize int    `json:"file_kgb_size,omitempty"`
@@ -106,20 +110,24 @@ type SubmissionFile struct {
 }
 
 // SubmissionFiles menampung berkas utama + slot pendukung (017).
-// PNS: KP (SK KP) + KGB. PPPK: KP (SK terakhir) + KGB (opsional) + SKP.
+// PNS: KP (SK KP) + KGB. PPPK: KP (SK Pertama) + PK (Perjanjian Kerja) +
+// KGB (opsional) + SKP.
 type SubmissionFiles struct {
 	Main SubmissionFile
 	KP   SubmissionFile
+	PK   SubmissionFile
 	KGB  SubmissionFile
 	SKP  SubmissionFile
 }
 
-// Slot mengembalikan (path, nama) untuk slot unduhan: "" | kp | kgb | skp.
+// Slot mengembalikan (path, nama) untuk slot unduhan: "" | kp | pk | kgb | skp.
 // Slot "" memakai berkas utama bila ada, lalu fallback ke slot KP.
 func (s Submission) Slot(slot string) (path, name string) {
 	switch slot {
 	case "kp":
 		return s.FileKPPath, s.FileKPName
+	case "pk":
+		return s.FilePKPath, s.FilePKName
 	case "kgb":
 		return s.FileKGBPath, s.FileKGBName
 	case "skp":
@@ -140,6 +148,9 @@ func FileNames(f SubmissionFiles) map[string]any {
 	}
 	if f.KP.Name != "" {
 		out["kp"] = f.KP.Name
+	}
+	if f.PK.Name != "" {
+		out["pk"] = f.PK.Name
 	}
 	if f.KGB.Name != "" {
 		out["kgb"] = f.KGB.Name

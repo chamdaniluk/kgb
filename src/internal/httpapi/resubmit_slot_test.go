@@ -59,10 +59,17 @@ func siapkanPengajuan(t *testing.T, fx fixture, status string, hasKGB bool) int6
 // resubmitReq mengirim form kirim ulang; files memetakan field slot -> nama berkas.
 func resubmitReq(t *testing.T, fx fixture, subID int64, uploads map[string]string) (*http.Response, map[string]any) {
 	t.Helper()
-	client, csrf := loginClient(t, fx.srv.URL, nipPNS, nipPNS)
+	return resubmitReqAs(t, fx, subID, nipPNS, nil, uploads)
+}
+
+// resubmitReqAs mengirim form kirim ulang atas nama NIP tertentu; extra
+// menambah/menimpa field form (mis. kolom khusus PPPK).
+func resubmitReqAs(t *testing.T, fx fixture, subID int64, nip string, extra, uploads map[string]string) (*http.Response, map[string]any) {
+	t.Helper()
+	client, csrf := loginClient(t, fx.srv.URL, nip, nip)
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	for k, v := range map[string]string{
+	fields := map[string]string{
 		"tmt_awal":            "2016-04-01",
 		"birth_place":         "Grobogan",
 		"birth_date":          "1980-01-01",
@@ -84,7 +91,11 @@ func resubmitReq(t *testing.T, fx fixture, subID int64, uploads map[string]strin
 		"last_sk_tanggal":     "2024-04-01",
 		"last_sk_pejabat":     "Bupati",
 		"pangkat_gol":         "III/b",
-	} {
+	}
+	for k, v := range extra {
+		fields[k] = v
+	}
+	for k, v := range fields {
 		_ = writer.WriteField(k, v)
 	}
 	for field, name := range uploads {
@@ -142,6 +153,112 @@ func TestResubmitSlotLamaBolehKosong(t *testing.T) {
 	fx := newFixture(t)
 	subID := siapkanPengajuan(t, fx, "dikembalikan_unit", true)
 	resp, errBody := resubmitReq(t, fx, subID, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d err=%v, ingin 200 (berkas lama dipakai ulang)", resp.StatusCode, errBody)
+	}
+}
+
+// pppkResubmitExtra adalah field tambahan form kirim ulang khusus PPPK
+// (golongan I-XVII + kolom naskah perjanjian kerja).
+func pppkResubmitExtra() map[string]string {
+	return map[string]string{
+		"tmt_awal":                      "2018-04-01",
+		"pangkat":                       "Ahli Pertama",
+		"last_kp_golongan":              "IX",
+		"last_kp_tmt":                   "2021-01-01",
+		"last_kp_masa_tahun":            "0",
+		"last_kp_masa_bulan":            "0",
+		"last_kp_nomor":                 "800/100/4.2/2021",
+		"last_kp_tanggal":               "2020-12-20",
+		"last_kp_pejabat":               "KEPALA DINAS PENDIDIKAN",
+		"last_kgb_golongan":             "IX",
+		"last_kgb_masa_tahun":           "4",
+		"last_kgb_masa_bulan":           "0",
+		"last_sk_tmt":                   "2024-12-01",
+		"last_sk_nomor":                 "800/421/4.2/2024",
+		"last_sk_tanggal":               "2024-11-07",
+		"last_sk_pejabat":               "KEPALA DINAS PENDIDIKAN",
+		"pangkat_gol":                   "IX",
+		"masa_perjanjian_kerja":         "5 tahun",
+		"perpanjangan_perjanjian_kerja": "2026-12-31",
+	}
+}
+
+// siapkanPengajuanPPPK mengembalikan id pengajuan PPPK untuk uji kirim ulang.
+// Slot SK Pertama + SKP selalu terisi; hasPK menentukan ada tidaknya berkas
+// Perjanjian Kerja (skema 020).
+func siapkanPengajuanPPPK(t *testing.T, fx fixture, status string, hasPK bool) int64 {
+	t.Helper()
+	ctx := context.Background()
+	var teacherID int64
+	if err := fx.pool.QueryRow(ctx, `SELECT id FROM teachers WHERE nip=$1`, nipPPPK).Scan(&teacherID); err != nil {
+		t.Fatal(err)
+	}
+	pkName, pkPath := "", ""
+	if hasPK {
+		pkName = "perjanjian.pdf"
+		pkPath = filepath.Join(os.TempDir(), "si-cendikia-uploads", "perjanjian.pdf")
+	}
+	var subID int64
+	if err := fx.pool.QueryRow(ctx, `
+		INSERT INTO submissions (teacher_id, status, proposed_tmt,
+			file_kp_name, file_kp_path, file_kp_size,
+			file_pk_name, file_pk_path, file_pk_size,
+			file_skp_name, file_skp_path, file_skp_size, submitted_at,
+			draft_birth_place, draft_birth_date, draft_karpeg, draft_pangkat, draft_jabatan,
+			draft_last_sk_pejabat, draft_last_sk_tanggal, draft_last_sk_nomor, draft_last_sk_tmt,
+			draft_last_sk_masa_tahun, draft_last_sk_masa_bulan,
+			draft_last_kp_golongan, draft_last_kp_tmt, draft_last_kp_nomor, draft_last_kp_tanggal, draft_last_kp_pejabat,
+			draft_last_kp_masa_tahun, draft_last_kp_masa_bulan,
+			draft_mkg_lama_tahun, draft_mkg_lama_bulan, draft_mkg_baru_tahun, draft_mkg_baru_bulan,
+			draft_masa_perjanjian, draft_perpanjangan_kontrak, current_salary, next_salary)
+		VALUES ($1,$2,'2026-12-01',
+			'sk-pertama.pdf',$3,100,
+			NULLIF($4,''),NULLIF($5,''),0,
+			'skp.pdf',$6,100, now(),
+			'Grobogan','1985-01-01','-','Ahli Pertama','Guru Ahli Pertama',
+			'KEPALA DINAS PENDIDIKAN','2024-11-07','800/421/4.2/2024','2024-12-01',
+			4,0, 'IX','2021-01-01','800/100/4.2/2021','2020-12-20','KEPALA DINAS PENDIDIKAN',
+			0,0, 4,0,6,0,
+			'5 tahun','2026-12-31', 3500000,3600000)
+		RETURNING id`, teacherID, status,
+		filepath.Join(os.TempDir(), "si-cendikia-uploads", "sk-pertama.pdf"),
+		pkName, pkPath,
+		filepath.Join(os.TempDir(), "si-cendikia-uploads", "skp.pdf")).Scan(&subID); err != nil {
+		t.Fatal(err)
+	}
+	return subID
+}
+
+// Ralat tim Dinas 2026-09-22: pengajuan PPPK yang belum punya berkas
+// Perjanjian Kerja wajib melengkapi slot itu saat kirim ulang; setelah
+// diunggah, kirim ulang lolos.
+func TestResubmitPPPKWajibPerjanjianKerja(t *testing.T) {
+	fx := newFixture(t)
+	subID := siapkanPengajuanPPPK(t, fx, "dikembalikan_unit", false)
+	extra := pppkResubmitExtra()
+
+	resp, errBody := resubmitReqAs(t, fx, subID, nipPPPK, extra, nil)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d err=%v, ingin 422 (Perjanjian Kerja wajib)", resp.StatusCode, errBody)
+	}
+	if !bytes.Contains([]byte(fmt.Sprint(errBody)), []byte("Perjanjian Kerja")) {
+		t.Fatalf("pesan = %v, ingin menyebut 'Perjanjian Kerja'", errBody)
+	}
+
+	resp, errBody = resubmitReqAs(t, fx, subID, nipPPPK, extra, map[string]string{"file_pk": "perjanjian.pdf"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d err=%v, ingin 200 setelah Perjanjian Kerja diunggah", resp.StatusCode, errBody)
+	}
+}
+
+// Pengajuan PPPK yang sudah punya berkas Perjanjian Kerja boleh dibiarkan
+// kosong saat kirim ulang (berkas lama dipakai ulang).
+func TestResubmitPPPKSlotPerjanjianLamaBolehKosong(t *testing.T) {
+	fx := newFixture(t)
+	subID := siapkanPengajuanPPPK(t, fx, "dikembalikan_unit", true)
+
+	resp, errBody := resubmitReqAs(t, fx, subID, nipPPPK, pppkResubmitExtra(), nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d err=%v, ingin 200 (berkas lama dipakai ulang)", resp.StatusCode, errBody)
 	}
