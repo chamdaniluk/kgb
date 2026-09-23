@@ -188,6 +188,62 @@ func CommitIssue(ctx context.Context, pool *pgxpool.Pool, issue IssueContext, si
 	return tx.Commit(ctx)
 }
 
+// CommitIssueManual menerbitkan surat dari unggahan TTE manual: PDF final
+// berasal dari naskah yang ditandatangani basah di luar sistem, jadi tidak
+// ada receipt eSign. Jalur lain identik dengan CommitIssue — nomor, status,
+// master guru, dan audit — supaya alur lanjutan dan rekap tetap seragam.
+func CommitIssueManual(ctx context.Context, pool *pgxpool.Pool, issue IssueContext, signerID int64, finalPath, note, ip string) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO letters (submission_id, template_id, number, pdf_path, signer_user_id, tte_receipt_id)
+		VALUES ($1,$2,$3,$4,$5,'')`, issue.Submission.ID, issue.Template.ID, issue.Number, finalPath, signerID); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE submissions SET status='terbit', rejection_note=NULL, tte_lock_token=NULL, tte_lock_expires_at=NULL, updated_at=now()
+		WHERE id=$1 AND status='menunggu_tte' AND tte_lock_token=$2 AND tte_lock_expires_at > now()`, issue.Submission.ID, issue.LockToken)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	masaKerja := issue.Submission.MasaKerjaTahun
+	if issue.Submission.ProposedMasaKerjaTahun != nil {
+		masaKerja = *issue.Submission.ProposedMasaKerjaTahun
+	}
+	draftVals := issue.Submission.LetterDraftValues()
+	pangkatGol := issue.Submission.PangkatGol
+	if issue.Submission.ProposedPangkatGol != nil && *issue.Submission.ProposedPangkatGol != "" {
+		pangkatGol = *issue.Submission.ProposedPangkatGol
+	}
+	pangkatGol = EffectiveGolongan(
+		KPLast{Golongan: draftVals.LastKPGolongan, TMT: draftVals.LastKPTMT, Tanggal: draftVals.LastKPTanggal},
+		draftVals.LastSKTanggal, pangkatGol)
+	unitID := issue.Submission.UnitID
+	if issue.Submission.ProposedUnitID != nil && *issue.Submission.ProposedUnitID != 0 {
+		unitID = *issue.Submission.ProposedUnitID
+	}
+	if err := UpdateTeacherAfterIssue(ctx, tx, issue.Submission.TeacherID, issue.Submission.ProposedTMT, masaKerja, draftVals, pangkatGol, unitID, issue.Submission.TMTAwal); err != nil {
+		return err
+	}
+	details, err := json.Marshal(map[string]string{"number": issue.Number, "mode": "manual", "note": note})
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs (actor_user_id, submission_id, action, details, ip) VALUES ($1,$2,'tte_manual',$3,$4)`, signerID, issue.Submission.ID, details, ip); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs (actor_user_id, submission_id, action, details, ip) VALUES ($1,$2,'terbit',$3,$4)`, signerID, issue.Submission.ID, details, ip); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // GetLetter mengambil surat berdasarkan ID.
 func GetLetter(ctx context.Context, pool *pgxpool.Pool, id int64) (LetterSummary, string, int64, error) {
 	var l LetterSummary

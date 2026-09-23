@@ -157,11 +157,10 @@ func letterValues(data LetterData) map[string]string {
 	}
 }
 
-// RenderLetterDOCX mengisi template DOCX dinas dengan data naskah dan
-// mengembalikan byte DOCX apa adanya, tanpa konversi ke PDF. Dipakai untuk
-// pratinjau/draft SK yang bisa diunduh sebelum TTE, sehingga tidak butuh
-// LibreOffice terpasang.
-func RenderLetterDOCX(r *Renderer, data LetterData) ([]byte, error) {
+// renderDOCX mengisi template DOCX dengan daftar placeholder yang dibiarkan
+// utuh (tidak diganti) lalu mengembalikan byte DOCX-nya. Dipakai bersama oleh
+// draft biasa (tidak ada yang dibiarkan utuh) dan draft TTE manual.
+func renderDOCX(r *Renderer, data LetterData, keep map[string]bool) ([]byte, error) {
 	if r == nil {
 		return nil, errors.New("renderer belum dikonfigurasi")
 	}
@@ -181,7 +180,11 @@ func RenderLetterDOCX(r *Renderer, data LetterData) ([]byte, error) {
 	}
 	defer os.RemoveAll(dir)
 	docxPath := filepath.Join(dir, "draft.docx")
-	if err := fillDOCX(templatePath, docxPath, letterValues(data)); err != nil {
+	values := letterValues(data)
+	for key := range keep {
+		delete(values, key)
+	}
+	if err := fillDOCX(templatePath, docxPath, values); err != nil {
 		return nil, err
 	}
 	body, err := os.ReadFile(docxPath)
@@ -189,6 +192,23 @@ func RenderLetterDOCX(r *Renderer, data LetterData) ([]byte, error) {
 		return nil, fmt.Errorf("baca DOCX hasil isi: %w", err)
 	}
 	return body, nil
+}
+
+// RenderLetterDOCX mengisi template DOCX dinas dengan data naskah dan
+// mengembalikan byte DOCX apa adanya, tanpa konversi ke PDF. Dipakai untuk
+// pratinjau/draft SK yang bisa diunduh sebelum TTE, sehingga tidak butuh
+// LibreOffice terpasang.
+func RenderLetterDOCX(r *Renderer, data LetterData) ([]byte, error) {
+	return renderDOCX(r, data, nil)
+}
+
+// RenderLetterDOCXManualTTE membuat DOCX untuk TTE manual: semua data naskah
+// terisi, tetapi ${nomor_naskah}, ${tanggal_naskah}, dan ${ttd_pengirim}
+// dibiarkan utuh supaya petugas mengisinya sendiri di Word setelah penomoran
+// dan penandatanganan basah (keputusan owner 2026-09-23). Sisa konfigurasi
+// mail merge pada template ikut dibersihkan di fillDOCX.
+func RenderLetterDOCXManualTTE(r *Renderer, data LetterData) ([]byte, error) {
+	return renderDOCX(r, data, map[string]bool{"nomor_naskah": true, "tanggal_naskah": true, "ttd_pengirim": true})
 }
 
 // resolveTemplate memilih template PNS/PPPK dan memastikan file ada.

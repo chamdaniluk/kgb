@@ -1758,6 +1758,123 @@ func (s *Server) handleDraftDOCX(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(docx)
 }
 
+// handleDraftDOCXManualTTE mengunduh konsep naskah SK khusus TTE manual:
+// data naskah terisi penuh, tetapi ${nomor_naskah}, ${tanggal_naskah}, dan
+// ${ttd_pengirim} dibiarkan utuh di DOCX untuk diisi petugas setelah
+// penomoran dan tanda tangan basah (permintaan pimpinan 2026-09-23). Sisa
+// mail merge pada template dibersihkan agar Word tidak mencari sumber data.
+// Read-only seperti draft biasa: nomor pratinjau tidak dicadangkan.
+func (s *Server) handleDraftDOCXManualTTE(w http.ResponseWriter, r *http.Request) {
+	submissionID, err := parsePathID(r, "submission_id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "INVALID_ID", "ID pengajuan tidak valid.")
+		return
+	}
+	if s.Renderer == nil {
+		writeErr(w, http.StatusServiceUnavailable, "PDF_NOT_CONFIGURED", "Renderer naskah belum dikonfigurasi.")
+		return
+	}
+	ld, ok := s.draftLetterData(w, r, submissionID)
+	if !ok {
+		return
+	}
+	docx, err := pdf.RenderLetterDOCXManualTTE(s.Renderer, ld)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "DOCX_RENDER_FAILED", "Draft TTE manual gagal dibuat.")
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tte-manual-SK-KGB-%d.docx"`, submissionID))
+	w.Header().Set("Content-Length", strconv.Itoa(len(docx)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(docx)
+}
+
+// handleTTEManual menerbitkan surat dari PDF hasil TTE manual: pimpinan
+// mengunggah naskah yang sudah dinomori, diisi, dan ditandatangani basah.
+// Surat memakai jalur penerbitan yang sama dengan TTE elektronik (nomor
+// dicadangkan via BeginIssue, status/master guru/audit lewat CommitIssue)
+// sehingga alur lanjutan tidak berubah; perbedaannya hanya sumber PDF final
+// dan receipt TTE kosong. Catatan alasan wajib agar riwayat menjelaskan
+// mengapa penerbitan tidak lewat tanda tangan elektronik.
+func (s *Server) handleTTEManual(w http.ResponseWriter, r *http.Request) {
+	submissionID, err := parsePathID(r, "submission_id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "INVALID_ID", "ID pengajuan tidak valid.")
+		return
+	}
+	if s.Files == nil {
+		writeErr(w, http.StatusInternalServerError, "FILE_STORAGE_NOT_CONFIGURED", "Penyimpanan surat belum dikonfigurasi.")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, files.MaxUploadSize+1<<20)
+	if err := r.ParseMultipartForm(maxMultipartMemory); err != nil {
+		writeErr(w, http.StatusBadRequest, "INVALID_FORM", "Form unggah tidak valid atau berkas melebihi 5MB.")
+		return
+	}
+	note := strings.TrimSpace(r.FormValue("note"))
+	if len([]rune(note)) < koreksiNoteMin {
+		writeErr(w, http.StatusBadRequest, "NOTE_REQUIRED",
+			"Catatan alasan TTE manual wajib diisi (minimal 10 karakter).")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "FILE_REQUIRED", "PDF surat bertanda tangan wajib diunggah.")
+		return
+	}
+	defer file.Close()
+	if header.Size > files.MaxUploadSize {
+		writeErr(w, http.StatusBadRequest, "FILE_TOO_LARGE", "Berkas melebihi 5MB.")
+		return
+	}
+	sub, err := store.GetSubmission(r.Context(), s.Pool, submissionID)
+	if err != nil {
+		if mapStoreError(w, err) {
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "INTERNAL", "Gagal mengambil pengajuan.")
+		return
+	}
+	if !s.canAccessSubmission(r, sub) {
+		writeErr(w, http.StatusForbidden, "FORBIDDEN", "Pengajuan bukan dalam kewenangan Anda.")
+		return
+	}
+	issue, err := store.BeginIssue(r.Context(), s.Pool, submissionID)
+	if err != nil {
+		if mapStoreError(w, err) {
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "TTE_PREPARE_FAILED", "Konsep surat gagal disiapkan.")
+		return
+	}
+	defer func() {
+		_ = store.ReleaseIssue(context.Background(), s.Pool, submissionID, issue.LockToken)
+	}()
+	finalPath, _, err := s.Files.SavePDF(r.Context(), file, header.Filename, header.Size)
+	if err != nil {
+		if errors.Is(err, files.ErrNotPDF) {
+			writeErr(w, http.StatusUnprocessableEntity, "NOT_PDF", "Berkas harus PDF.")
+			return
+		}
+		if errors.Is(err, files.ErrTooLarge) {
+			writeErr(w, http.StatusUnprocessableEntity, "FILE_TOO_LARGE", "Berkas melebihi 5MB.")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "PDF_SAVE_FAILED", "Surat final gagal disimpan.")
+		return
+	}
+	if err := store.CommitIssueManual(r.Context(), s.Pool, issue, userFrom(r).ID, finalPath, note, clientIP(r)); err != nil {
+		_ = s.Files.Remove(finalPath)
+		if mapStoreError(w, err) {
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "ISSUE_COMMIT_FAILED", "Penerbitan surat gagal diselesaikan.")
+		return
+	}
+	writeData(w, http.StatusCreated, map[string]any{"number": issue.Number, "issued_at": time.Now().Format(time.RFC3339), "mode": "manual"})
+}
+
 // handleDraftPDF menyajikan pratinjau PDF hasil render template Word asli
 // (via LibreOffice di server) untuk layar TTE pimpinan. Read-only seperti
 // draft DOCX: nomor sementara, tanpa lock TTE. Disajikan inline agar bisa

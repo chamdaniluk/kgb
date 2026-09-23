@@ -113,6 +113,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/letters/{submission_id}/sign", s.withAuth("pimpinan")(s.handleSignLetter))
 	mux.HandleFunc("POST /api/v1/letters/{submission_id}/reject", s.withAuth("pimpinan")(s.handleTTEReject))
 	mux.HandleFunc("GET /api/v1/letters/{submission_id}/draft-docx", s.withAuth("pimpinan", "admin_dinas", "verifikator_dinas")(s.handleDraftDOCX))
+	// Konsep DOCX khusus TTE manual: placeholder nomor/tanggal/TTD utuh.
+	mux.HandleFunc("GET /api/v1/letters/{submission_id}/draft-docx-manual", s.withAuth("pimpinan")(s.handleDraftDOCXManualTTE))
+	// Terbitkan surat dari unggahan PDF hasil TTE manual (tanda tangan basah).
+	mux.HandleFunc("POST /api/v1/letters/{submission_id}/manual", s.withAuth("pimpinan")(s.handleTTEManual))
 	mux.HandleFunc("GET /api/v1/letters/{submission_id}/draft-pdf", s.withAuth("pimpinan", "admin_dinas", "verifikator_dinas")(s.handleDraftPDF))
 	mux.HandleFunc("GET /api/v1/letters/{id}/download", s.withAuth()(s.handleLetterDownload))
 	mux.HandleFunc("GET /api/v1/letters", s.withAuth("verifikator_dinas", "admin_dinas", "pimpinan", "admin")(s.handleListLetters))
