@@ -1176,6 +1176,10 @@ func (s *Server) handleSubmissionFile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", `inline; filename="`+safeFilename(name, "berkas.pdf")+`"`)
+	// Berkas pada URL yang sama bisa diganti lewat kirim-ulang/koreksi; larang
+	// cache (Cloudflare menimpa Cache-Control, URL pratinjau memakai buster
+	// `updated_at` sebagai lapisan utama).
+	w.Header().Set("Cache-Control", "no-store")
 	// Berkas ditampilkan dalam iframe same-origin di halaman pemeriksaan;
 	// header frame global (DENY) harus dilonggarkan khusus respons ini.
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
