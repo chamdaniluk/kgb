@@ -16,7 +16,7 @@ var logoGroboganPNG []byte
 //go:embed assets/fonts/plus-jakarta-sans-var.woff2
 var fontPJSVar []byte
 
-const assetVersion = "20260929a"
+const assetVersion = "20260929c"
 
 type pageData struct {
 	Title   string
@@ -716,7 +716,7 @@ input[aria-invalid="true"]:focus-visible,textarea[aria-invalid="true"]:focus-vis
 .search .icon{color:var(--muted-2)}
 .search input{border:0;outline:0;width:100%;font:inherit;font-size:14px;background:transparent;margin:0;padding:0}
 .search input:focus-visible{box-shadow:none}
-.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:#fff;border-radius:999px;padding:7px 13px;font-size:12.5px;font-weight:700;cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+.pill{display:inline-flex;text-decoration:none;align-items:center;gap:6px;border:1px solid var(--border);background:#fff;border-radius:999px;padding:7px 13px;font-size:12.5px;font-weight:700;cursor:pointer;transition:background .15s,border-color .15s,color .15s}
 .pill:hover{border-color:#BACBDF}
 .pill.active{background:var(--grad);color:#fff;border-color:transparent;box-shadow:0 8px 18px -10px rgba(37,99,235,.6)}
 .queue-head{display:flex;justify-content:space-between;gap:var(--space-3);align-items:center;flex-wrap:wrap;margin-bottom:var(--space-4)}

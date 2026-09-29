@@ -1188,7 +1188,7 @@ func (s *Server) handleSubmissionFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUnitQueue(w http.ResponseWriter, r *http.Request) {
-	s.handleQueue(w, r, "verifikator_unit", "menunggu_unit")
+	s.handleQueue(w, r, "verifikator_unit", []string{"menunggu_unit"})
 }
 
 // handleUnitMonitor: pantauan unit — seluruh pengajuan dalam scope unit
@@ -1211,15 +1211,32 @@ func (s *Server) handleUnitMonitor(w http.ResponseWriter, r *http.Request) {
 	writeDataMeta(w, http.StatusOK, items, map[string]any{"limit": page.Limit, "offset": page.Offset, "total": total})
 }
 func (s *Server) handleDinasQueue(w http.ResponseWriter, r *http.Request) {
-	s.handleQueue(w, r, "verifikator_dinas", "menunggu_dinas")
+	s.handleQueue(w, r, "verifikator_dinas", dinasQueueStatuses(r.URL.Query().Get("status")))
 }
 func (s *Server) handlePendingTTE(w http.ResponseWriter, r *http.Request) {
-	s.handleQueue(w, r, "pimpinan", "menunggu_tte")
+	s.handleQueue(w, r, "pimpinan", []string{"menunggu_tte"})
 }
 
-func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request, role, status string) {
+// dinasQueueStatuses memetakan filter tab antrean Dinas ke daftar status
+// (whitelist) — tanpa ini antrean terkunci di satu status sehingga tab
+// Dikembalikan/Terbit selalu kosong. Nilai tak dikenal jatuh ke antrean
+// aktif (menunggu Dinas + menunggu TTE, sesuai tampilan lama).
+func dinasQueueStatuses(filter string) []string {
+	switch strings.ToLower(strings.TrimSpace(filter)) {
+	case "semua":
+		return []string{"menunggu_dinas", "menunggu_tte", "dikembalikan_unit", "dikembalikan_dinas", "terbit"}
+	case "dikembalikan":
+		return []string{"dikembalikan_unit", "dikembalikan_dinas"}
+	case "terbit":
+		return []string{"terbit"}
+	default:
+		return []string{"menunggu_dinas", "menunggu_tte"}
+	}
+}
+
+func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request, role string, statuses []string) {
 	page := pageFrom(r)
-	items, total, err := store.ListQueue(r.Context(), s.Pool, role, userFrom(r).UnitID, status, page)
+	items, total, err := store.ListQueue(r.Context(), s.Pool, role, userFrom(r).UnitID, statuses, page)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "INTERNAL", "Gagal mengambil antrean.")
 		return

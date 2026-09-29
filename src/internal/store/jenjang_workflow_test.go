@@ -82,7 +82,7 @@ func TestAlurJenjangKorwilDanDinasLangsung(t *testing.T) {
 	}
 
 	// Korwil Brati melihat SD sekecamatan walau tanpa parent_id.
-	items, total, err := ListQueue(ctx, pool, "verifikator_unit", &korwilBrati, "menunggu_unit", NewPage(20, 0))
+	items, total, err := ListQueue(ctx, pool, "verifikator_unit", &korwilBrati, []string{"menunggu_unit"}, NewPage(20, 0))
 	if err != nil {
 		t.Fatalf("antrean korwil brati: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestAlurJenjangKorwilDanDinasLangsung(t *testing.T) {
 		}
 	}
 	// Korwil Gabus tidak melihat SD Brati.
-	_, total, err = ListQueue(ctx, pool, "verifikator_unit", &korwilGabus, "menunggu_unit", NewPage(20, 0))
+	_, total, err = ListQueue(ctx, pool, "verifikator_unit", &korwilGabus, []string{"menunggu_unit"}, NewPage(20, 0))
 	if err != nil {
 		t.Fatalf("antrean korwil gabus: %v", err)
 	}

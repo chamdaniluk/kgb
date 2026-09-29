@@ -138,15 +138,16 @@ func ListSubmissionsForTeacher(ctx context.Context, pool *pgxpool.Pool, teacherI
 	return result, rows.Err()
 }
 
-// ListQueue mengambil antrean status tertentu dengan cakupan jenjang:
+// ListQueue mengambil antrean sekumpulan status (whitelist dari pemanggil)
+// dengan cakupan jenjang:
 // akun Korwil melihat usulannya sendiri (pegawai Korwil diverifikasi sub
 // di Korwil-nya) + TK/SD sekecamatan (relasi parent atau kecamatan sama);
 // akun SMP/SKB melihat unitnya sendiri. Unit Dinas tidak punya antrean unit
 // karena usulannya langsung berstatus menunggu_dinas saat dibuat.
 // Mengembalikan potongan halaman beserta total baris (untuk pagination).
-func ListQueue(ctx context.Context, pool *pgxpool.Pool, role string, unitID *int64, status string, page Page) ([]Submission, int64, error) {
-	where := ` WHERE s.status = $1`
-	args := []any{status}
+func ListQueue(ctx context.Context, pool *pgxpool.Pool, role string, unitID *int64, statuses []string, page Page) ([]Submission, int64, error) {
+	where := ` WHERE s.status = ANY($1)`
+	args := []any{statuses}
 	verificationUnit := "COALESCE(s.proposed_unit_id, s.snapshot_unit_id, t.unit_id)"
 	if role == "verifikator_unit" {
 		if unitID == nil {
