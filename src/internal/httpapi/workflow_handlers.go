@@ -138,6 +138,7 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 		t.PangkatGol = kgb.Golongan
 	}
 	draft.LastSKTMT = kgb.TMT
+	draft.LastSKGolongan = kgb.Golongan
 	draft.LastSKMasaTahun = kgb.MasaTahun
 	draft.LastSKMasaBulan = kgb.MasaBulan
 	draft.LastSKNomor = kgb.Nomor

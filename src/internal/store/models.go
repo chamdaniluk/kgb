@@ -86,6 +86,7 @@ type Submission struct {
 	DraftLastSKTMT           *time.Time     `json:"draft_last_sk_tmt,omitempty"`
 	DraftLastSKMasaTahun     *int           `json:"draft_last_sk_masa_tahun,omitempty"`
 	DraftLastSKMasaBulan     *int           `json:"draft_last_sk_masa_bulan,omitempty"`
+	DraftLastKBGGolongan     string         `json:"draft_last_kgb_golongan,omitempty"`
 	DraftLastKPGolongan      string         `json:"draft_last_kp_golongan,omitempty"`
 	DraftLastKPTMT           *time.Time     `json:"draft_last_kp_tmt,omitempty"`
 	DraftLastKPNomor         string         `json:"draft_last_kp_nomor,omitempty"`
@@ -232,6 +233,7 @@ type LetterDraft struct {
 	LastSKTanggal  *time.Time
 	LastSKNomor    string
 	LastSKTMT      *time.Time
+	LastSKGolongan string
 	LastSKMasaTahun *int
 	LastSKMasaBulan *int
 	LastKPGolongan string
@@ -283,6 +285,7 @@ func (s Submission) LetterDraftValues() LetterDraft {
 		LastSKTanggal:  s.DraftLastSKTanggal,
 		LastSKNomor:    s.DraftLastSKNomor,
 		LastSKTMT:      s.DraftLastSKTMT,
+		LastSKGolongan: s.DraftLastKBGGolongan,
 		LastSKMasaTahun: s.DraftLastSKMasaTahun,
 		LastSKMasaBulan: s.DraftLastSKMasaBulan,
 		LastKPGolongan: s.DraftLastKPGolongan,

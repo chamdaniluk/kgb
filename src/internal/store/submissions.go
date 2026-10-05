@@ -43,6 +43,7 @@ SELECT s.id, s.teacher_id, s.status, s.proposed_tmt,
        COALESCE(s.draft_pangkat, ''), COALESCE(s.draft_jabatan, ''),
        COALESCE(s.draft_last_sk_pejabat, ''), s.draft_last_sk_tanggal, COALESCE(s.draft_last_sk_nomor, ''),
        s.draft_last_sk_tmt, s.draft_last_sk_masa_tahun, s.draft_last_sk_masa_bulan,
+       COALESCE(s.draft_last_kgb_golongan, ''),
        COALESCE(s.draft_last_kp_golongan, ''), s.draft_last_kp_tmt, COALESCE(s.draft_last_kp_nomor, ''),
        s.draft_last_kp_tanggal, COALESCE(s.draft_last_kp_pejabat, ''),
        s.draft_last_kp_masa_tahun, s.draft_last_kp_masa_bulan,
@@ -81,6 +82,7 @@ func scanSubmission(row pgx.Row) (Submission, error) {
 		&s.DraftBirthPlace, &s.DraftBirthDate, &s.DraftKarpeg, &s.DraftPangkat, &s.DraftJabatan,
 		&s.DraftLastSKPejabat, &s.DraftLastSKTanggal, &s.DraftLastSKNomor, &s.DraftLastSKTMT,
 		&s.DraftLastSKMasaTahun, &s.DraftLastSKMasaBulan,
+		&s.DraftLastKBGGolongan,
 		&s.DraftLastKPGolongan, &s.DraftLastKPTMT, &s.DraftLastKPNomor, &s.DraftLastKPTanggal, &s.DraftLastKPPejabat,
 		&s.DraftLastKPMasaTahun, &s.DraftLastKPMasaBulan,
 		&s.DraftMKGLamaTahun, &s.DraftMKGLamaBulan, &s.DraftMKGBaruTahun, &s.DraftMKGBaruBulan,
@@ -303,10 +305,10 @@ func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorI
 			draft_last_kp_golongan, draft_last_kp_tmt, draft_last_kp_nomor, draft_last_kp_tanggal, draft_last_kp_pejabat,
 			draft_last_kp_masa_tahun, draft_last_kp_masa_bulan,
 			draft_mkg_lama_tahun, draft_mkg_lama_bulan, draft_mkg_baru_tahun, draft_mkg_baru_bulan,
-			draft_masa_perjanjian, draft_perpanjangan_kontrak, tmt_awal)
+			draft_masa_perjanjian, draft_perpanjangan_kontrak, tmt_awal, draft_last_kgb_golongan)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
 			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, now(),
-			$29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53) RETURNING id`,
+			$29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54) RETURNING id`,
 		teacherID, initialStatus, proposedTMT, proposedMasaKerja, proposedTMTKGBLast, change.PangkatGol, change.Pangkat, change.Jabatan,
 		change.UnitID, change.EffectiveDate, nullIfEmpty(change.Note), currentSalary, nextSalary,
 		files.Main.Name, nullIfEmpty(files.Main.Path), files.Main.Size,
@@ -320,7 +322,7 @@ func CreateSubmission(ctx context.Context, pool *pgxpool.Pool, teacherID, actorI
 		nullIfEmpty(draft.LastKPGolongan), draft.LastKPTMT, nullIfEmpty(draft.LastKPNomor), draft.LastKPTanggal, nullIfEmpty(draft.LastKPPejabat),
 		draft.LastKPMasaTahun, draft.LastKPMasaBulan,
 		draft.MKGLamaTahun, draft.MKGLamaBulan, draft.MKGBaruTahun, draft.MKGBaruBulan,
-		nullIfEmpty(draft.MasaPerjanjian), draft.Perpanjangan, tmtAwal).Scan(&id)
+		nullIfEmpty(draft.MasaPerjanjian), draft.Perpanjangan, tmtAwal, nullIfEmpty(draft.LastSKGolongan)).Scan(&id)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -393,6 +395,7 @@ func applyDraftUpdate(ctx context.Context, tx pgx.Tx, id int64, u draftUpdate) e
 		draft_last_kp_masa_tahun=$44, draft_last_kp_masa_bulan=$45,
 		draft_mkg_lama_tahun=$46, draft_mkg_lama_bulan=$47, draft_mkg_baru_tahun=$48, draft_mkg_baru_bulan=$49,
 		draft_masa_perjanjian=$50, draft_perpanjangan_kontrak=$51, tmt_awal=$52,
+		draft_last_kgb_golongan=$56,
 		submitted_at=CASE WHEN $54 THEN now() ELSE submitted_at END,
 		rejection_note=CASE WHEN $55 THEN NULL ELSE rejection_note END,
 		updated_at=now() WHERE id=$53`,
@@ -409,7 +412,8 @@ func applyDraftUpdate(ctx context.Context, tx pgx.Tx, id int64, u draftUpdate) e
 		nullIfEmpty(u.Draft.LastKPGolongan), u.Draft.LastKPTMT, nullIfEmpty(u.Draft.LastKPNomor), u.Draft.LastKPTanggal, nullIfEmpty(u.Draft.LastKPPejabat),
 		u.Draft.LastKPMasaTahun, u.Draft.LastKPMasaBulan,
 		u.Draft.MKGLamaTahun, u.Draft.MKGLamaBulan, u.Draft.MKGBaruTahun, u.Draft.MKGBaruBulan,
-		nullIfEmpty(u.Draft.MasaPerjanjian), u.Draft.Perpanjangan, u.TMTAwal, id, u.BumpSubmittedAt, u.ClearRejectionNote); err != nil {
+		nullIfEmpty(u.Draft.MasaPerjanjian), u.Draft.Perpanjangan, u.TMTAwal, id, u.BumpSubmittedAt, u.ClearRejectionNote,
+		nullIfEmpty(u.Draft.LastSKGolongan)); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -625,6 +629,7 @@ func koreksiSnapshot(s Submission) map[string]string {
 		"last_sk_tanggal":     dateStr(d.LastSKTanggal),
 		"last_sk_nomor":       d.LastSKNomor,
 		"last_sk_tmt":         dateStr(d.LastSKTMT),
+		"last_kgb_golongan":   d.LastSKGolongan,
 		"last_sk_masa_tahun":  ptr(d.LastSKMasaTahun),
 		"last_sk_masa_bulan":  ptr(d.LastSKMasaBulan),
 		"last_kp_golongan":    d.LastKPGolongan,

@@ -90,13 +90,16 @@ func TestSubmitIsianSKKGBAsliMeskiKPMenang(t *testing.T) {
 		t.Fatalf("submit status=%d body=%v", resp.StatusCode, envelope.Error)
 	}
 
-	var gotNomor, gotKPNomor string
+	var gotNomor, gotKPNomor, gotGol string
 	var gotTMT, gotTanggal time.Time
-	if err := fx.pool.QueryRow(ctx, `SELECT draft_last_sk_nomor, draft_last_kp_nomor, draft_last_sk_tmt, draft_last_sk_tanggal FROM submissions WHERE id=$1`, int64(envelope.Data["id"].(float64))).Scan(&gotNomor, &gotKPNomor, &gotTMT, &gotTanggal); err != nil {
+	if err := fx.pool.QueryRow(ctx, `SELECT draft_last_sk_nomor, draft_last_kp_nomor, draft_last_sk_tmt, draft_last_sk_tanggal, draft_last_kgb_golongan FROM submissions WHERE id=$1`, int64(envelope.Data["id"].(float64))).Scan(&gotNomor, &gotKPNomor, &gotTMT, &gotTanggal, &gotGol); err != nil {
 		t.Fatal(err)
 	}
 	if gotNomor != "800/011/DISDIK/2024" {
 		t.Fatalf("isian SK KGB tersimpan = %q, ingin nomor SK KGB asli (bukan pemenang KP)", gotNomor)
+	}
+	if gotGol != "III/a" {
+		t.Fatalf("golongan KGB tersimpan = %q, ingin golongan saat SK KGB (III/a, bukan golongan efektif)", gotGol)
 	}
 	if gotKPNomor != "800.1.3.2/491/2026" {
 		t.Fatalf("isian SK KP tersimpan = %q, ingin 800.1.3.2/491/2026", gotKPNomor)
