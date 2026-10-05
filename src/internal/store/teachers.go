@@ -264,6 +264,10 @@ func UpdateTeacherAfterIssue(ctx context.Context, tx pgx.Tx, teacherID int64, pr
 	}
 	// KP terakhir: bila ada di draft, menjadi acuan golongan berikutnya.
 	// KGB terakhir: golongan efektif (KP bila lebih baru) + TMT usulan.
+	// Placeholder $22/$23 menghindari pakai-ulang $1/$2: pgx mengirim tipe
+	// parameter per placeholder dan postgres menolak pakai-ulang dengan
+	// deduksi ganda ("inconsistent types for parameter $2", 42P08) yang
+	// melumpuhkan seluruh penerbitan surat (TTE manual & esign).
 	_, err := tx.Exec(ctx, `UPDATE teachers SET
 		tmt_kgb_last=$1,
 		masa_kerja_tahun=$2,
@@ -276,8 +280,8 @@ func UpdateTeacherAfterIssue(ctx context.Context, tx pgx.Tx, teacherID int64, pr
 		last_sk_pejabat=COALESCE(NULLIF($8,''), last_sk_pejabat),
 		last_sk_tanggal=COALESCE($9, last_sk_tanggal),
 		last_sk_nomor=COALESCE(NULLIF($10,''), last_sk_nomor),
-		last_sk_tmt_berlaku=$1,
-		last_sk_masa_kerja_tahun=COALESCE($11, $2),
+		last_sk_tmt_berlaku=$22,
+		last_sk_masa_kerja_tahun=COALESCE($11::int, $23::int),
 		last_sk_masa_kerja_bulan=COALESCE($12, 0),
 		last_kp_golongan=COALESCE(NULLIF($13,''), last_kp_golongan),
 		last_kp_tmt=COALESCE($14, last_kp_tmt),
@@ -294,7 +298,8 @@ func UpdateTeacherAfterIssue(ctx context.Context, tx pgx.Tx, teacherID int64, pr
 		draft.LastSKMasaTahun, draft.LastSKMasaBulan,
 		draft.LastKPGolongan, draft.LastKPTMT, draft.LastKPNomor,
 		draft.LastKPMasaTahun, draft.LastKPMasaBulan,
-		pangkatGol, unitID, tmtAwal, teacherID)
+		pangkatGol, unitID, tmtAwal, teacherID,
+		proposedTMT, proposedMasaKerja)
 	return err
 }
 

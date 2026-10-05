@@ -145,15 +145,15 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	draft.LastSKPejabat = kgb.Pejabat
 	// Naskah SK mengikuti SK terbaru (keputusan owner 2026-09-09): bandingkan
 	// TANGGAL SK — KP (PNS) / SK Pertama-Perpanjangan Kontrak (PPPK) vs KGB.
-	// Pemenang mengisi SELURUH kolom identitas SK terakhir naskah (pejabat,
-	// tanggal, nomor, TMT). Masa kerja golongan lama tetap dari SK KGB
+	// Pemenang mengisi SELURUH kolom identitas SK terakhir NASKAH — diterapkan
+	// saat render lewat Submission.NaskahDraft, BUKAN dengan menimpa isian di
+	// sini: draft_last_sk_* tersimpan apa adanya (SK KGB asli) agar histori
+	// runtut dan bisa diaudit terhadap berkas (keputusan owner 2026-10-05).
+	// Menimpa isian membuat koreksi/tolak-usulan tak pernah mengubah nilai
+	// tersimpan (kasus #165). Masa kerja golongan lama tetap dari SK KGB
 	// (keputusan owner); pangkat mengikuti golongan pemenang.
 	kpMenang := kp.HasData() && store.SKNewer(kp.Tanggal, kgb.Tanggal)
 	if kpMenang {
-		draft.LastSKTMT = kp.TMT
-		draft.LastSKNomor = kp.Nomor
-		draft.LastSKTanggal = kp.Tanggal
-		draft.LastSKPejabat = kp.Pejabat
 		if t.ASNType == "pns" {
 			draft.Pangkat = pangkatForGolongan(kp.Golongan)
 		}
@@ -211,9 +211,16 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 			draft.LastSKTMT = t.TMTKGBLast
 		}
 	}
+	// Jangkar TMT dan tanggal pembanding golongan tetap SK pemenang supaya
+	// hasil hitung TMT/gaji tidak berubah dari perilaku sebelumnya; isian
+	// tersimpan tetap SK KGB asli.
+	acuanTMT, acuanTanggal := draft.LastSKTMT, draft.LastSKTanggal
+	if kpMenang {
+		acuanTMT, acuanTanggal = kp.TMT, kp.Tanggal
+	}
 	prior := *tmtAwal
-	if draft.LastSKTMT != nil && draft.LastSKTMT.After(*tmtAwal) {
-		prior = *draft.LastSKTMT
+	if acuanTMT != nil && acuanTMT.After(*tmtAwal) {
+		prior = *acuanTMT
 	}
 	tmt := letterdata.NextDueTMT(*tmtAwal, prior, asOf)
 	if tmtAwal.After(tmt) {
@@ -259,7 +266,7 @@ func (s *Server) prepareKGBFromForm(r *http.Request, t store.Teacher, asOf time.
 	// Sebutan pangkat PNS mengikuti golongan efektif; PPPK tidak punya
 	// sebutan pangkat PNS — naskahnya memakai golongan I-XVII (template PPPK
 	// mencetak "pangkat_jabatan" langsung dari golongan).
-	gol := store.EffectiveGolongan(kp, draft.LastSKTanggal, t.PangkatGol)
+	gol := store.EffectiveGolongan(kp, acuanTanggal, t.PangkatGol)
 	if t.ASNType == "pns" {
 		draft.Pangkat = pangkatForGolongan(gol)
 	} else if draft.Pangkat == "" {
@@ -1585,7 +1592,7 @@ func (s *Server) handleSignLetter(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		_ = store.ReleaseIssue(context.Background(), s.Pool, submissionID, issue.LockToken)
 	}()
-	draft := issue.Submission.LetterDraftValues()
+	draft := issue.Submission.NaskahDraft()
 	signerJob := ""
 	if signer.JobTitle != nil {
 		signerJob = *signer.JobTitle
@@ -1706,7 +1713,7 @@ func (s *Server) draftLetterData(w http.ResponseWriter, r *http.Request, submiss
 	if signer.EmployeeNumber != nil {
 		signerNIP = strings.TrimSpace(*signer.EmployeeNumber)
 	}
-	draft := sub.LetterDraftValues()
+	draft := sub.NaskahDraft()
 	perpanjangan := "-"
 	if draft.Perpanjangan != nil {
 		perpanjangan = pdf.FormatTanggalID(*draft.Perpanjangan)

@@ -156,7 +156,7 @@ func CommitIssue(ctx context.Context, pool *pgxpool.Pool, issue IssueContext, si
 	if issue.Submission.ProposedMasaKerjaTahun != nil {
 		masaKerja = *issue.Submission.ProposedMasaKerjaTahun
 	}
-	draftVals := issue.Submission.LetterDraftValues()
+	draftVals := issue.Submission.NaskahDraft()
 	// Nilai efektif: golongan & unit yang dipilih pada form (disimpan di proposed_*).
 	// Jika form tidak mengubah, pakai master saat issue.
 	// Golongan efektif KGB: KP bila tanggal SK-nya lebih baru dari SK KGB
@@ -216,7 +216,7 @@ func CommitIssueManual(ctx context.Context, pool *pgxpool.Pool, issue IssueConte
 	if issue.Submission.ProposedMasaKerjaTahun != nil {
 		masaKerja = *issue.Submission.ProposedMasaKerjaTahun
 	}
-	draftVals := issue.Submission.LetterDraftValues()
+	draftVals := issue.Submission.NaskahDraft()
 	pangkatGol := issue.Submission.PangkatGol
 	if issue.Submission.ProposedPangkatGol != nil && *issue.Submission.ProposedPangkatGol != "" {
 		pangkatGol = *issue.Submission.ProposedPangkatGol

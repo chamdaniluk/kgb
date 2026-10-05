@@ -36,6 +36,20 @@ func TestAlurTTEManualTerbit(t *testing.T) {
 		"pimpinan-manual", hash("sandi"), unitID); err != nil {
 		t.Fatal(err)
 	}
+	// Akun verifikator tidak dibuat oleh fixture — seed di sini (pola sama
+	// dengan e2e workflow_test.go) agar login 401 tidak melumpuhkan test.
+	for _, u := range []struct {
+		username, role string
+		unit           *int64
+	}{
+		{username: "verifikator-unit", role: "verifikator_unit", unit: &unitID},
+		{username: "verifikator-dinas", role: "verifikator_dinas"},
+	} {
+		if _, err := fx.pool.Exec(ctx, `INSERT INTO users (username,password_hash,role,name,unit_id) VALUES ($1,$2,$3,$4,$5)`,
+			u.username, hash("sandi"), u.role, u.username, u.unit); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	fileStore, err := files.New(t.TempDir())
 	if err != nil {

@@ -310,6 +310,24 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// NaskahDraft mengembalikan draft untuk perangkai naskah SK: identitas SK
+// terakhir naskah mengikuti SK terbaru (keputusan owner 2026-09-09) — bila
+// tanggal SK KP/SK Pertama lebih baru atau sama dengan SK KGB, kolom
+// pejabat/tanggal/nomor/TMT naskah memakai SK KP. Isian tersimpan
+// (draft_last_sk_*) tidak diubah: tetap SK KGB asli agar histori runtut;
+// masa kerja naskah juga tetap dari SK KGB (keputusan owner).
+func (s Submission) NaskahDraft() LetterDraft {
+	d := s.LetterDraftValues()
+	if s.DraftLastKPGolongan != "" && s.DraftLastKPTMT != nil &&
+		SKNewer(s.DraftLastKPTanggal, s.DraftLastSKTanggal) {
+		d.LastSKTMT = s.DraftLastKPTMT
+		d.LastSKNomor = s.DraftLastKPNomor
+		d.LastSKTanggal = s.DraftLastKPTanggal
+		d.LastSKPejabat = s.DraftLastKPPejabat
+	}
+	return d
+}
+
 // AuditLog adalah satu entri jejak audit append-only.
 type AuditLog struct {
 	ID           int64          `json:"id"`
